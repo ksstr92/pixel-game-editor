@@ -1,0 +1,1389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Chronicles of the Forgotten Realm</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #12100a;
+  font-family: Georgia, serif;
+  user-select: none;
+  overflow: hidden;
+}
+#game-wrap {
+  position: fixed;
+  transform-origin: top left;
+}
+#canvas {
+  display: block;
+  cursor: crosshair;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5,5,15,0.92);
+  color: #f0d080;
+  text-align: center;
+  pointer-events: none;
+  z-index: 10;
+}
+#overlay h1 { font-size: 36px; text-shadow: 0 0 24px #ff8800, 0 0 8px #ff4400; margin-bottom: 12px; }
+#overlay .sub  { font-size: 14px; color: #bbb; line-height: 1.7; }
+#overlay .ctrl { margin-top: 16px; font-size: 13px; line-height: 2.1; color: #ccc; }
+#overlay .prompt { font-size: 18px; color: #f0d080; margin-top: 20px; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+#hud {
+  position: fixed;
+  pointer-events: none;
+  z-index: 5;
+}
+</style>
+</head>
+<body>
+<div id="game-wrap">
+  <canvas id="canvas"></canvas>
+  <div id="overlay">
+    <h1>⚔ Chronicles of the Forgotten Realm</h1>
+    <div class="sub">
+      Darkness stirs beneath the village.<br>
+      Venture south — into the dungeon.
+    </div>
+    <div class="ctrl">
+      🗡 <b>WASD</b> — Move &nbsp;|&nbsp; 🖱 <b>Left Click</b> — Sword Attack<br>
+      💨 <b>Shift</b> — Roll / Dash &nbsp;|&nbsp; 💬 <b>E</b> — Talk to NPCs
+    </div>
+    <div style="margin-top:14px;">
+      <button onclick="event.stopPropagation();loadWorldFile()"
+        style="background:#0d1f0d;border:1px solid #2a5a2a;color:#5c9;padding:6px 18px;
+               font-size:13px;cursor:pointer;border-radius:3px;font-family:Georgia,serif;">
+        📂 Load World File
+      </button>
+    </div>
+    <div class="prompt">Press any key or click to begin</div>
+  </div>
+</div>
+
+<!-- Small persistent world-loader button (top-right corner) -->
+<div style="position:fixed;top:8px;right:8px;z-index:20;pointer-events:auto;">
+  <button onclick="loadWorldFile()"
+    title="Load world.json"
+    style="background:rgba(0,0,0,0.55);border:1px solid #2a3a2a;color:#446;
+           padding:3px 9px;font-size:10px;cursor:pointer;border-radius:3px;
+           font-family:monospace;transition:color 0.15s;"
+    onmouseover="this.style.color='#5c9'" onmouseout="this.style.color='#446'">
+    🌍 World
+  </button>
+</div>
+
+<canvas id="hud"></canvas>
+
+<script>
+'use strict';
+
+// ════════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ════════════════════════════════════════════════════════════════════════════
+const VW = 1280, VH = 720;
+const TS         = 64;           // tile size in pixels — camera scrolls over 64×36 tile world
+const TILE_SCALE = TS / 20;      // 3.2 — multiply old 20-px distances/speeds by this
+const SS         = TS / 32;      // sprite scale for procedural fallback shapes
+const MAP_COLS = 64, MAP_ROWS = 64;
+
+const CFG = {
+  playerSpeed:         165 * TILE_SCALE,   // ~528 px/s
+  dashSpeed:           420 * TILE_SCALE,   // ~1344 px/s
+  dashDuration:        0.18,
+  dashCooldown:        0.75,
+  atkDuration:         0.22,
+  atkCooldown:         0.40,
+  atkRange:            54  * TILE_SCALE,   // ~173 px  (≈2.7 tiles)
+  atkArc:              Math.PI * 0.88,
+  atkDamage:           35,
+  heartHP:             100,
+  hearts:              5,
+  enemySpeed:          68  * TILE_SCALE,   // ~218 px/s
+  enemyAggroRange:     195 * TILE_SCALE,   // ~624 px  (≈9.75 tiles)
+  enemyAttackRange:    26  * TILE_SCALE,   // ~83 px   (≈1.3 tiles)
+  enemyAttackCooldown: 1.2,
+  enemyAttackDamage:   18,
+  enemyKnockback:      190 * TILE_SCALE,   // ~608 px/s impulse
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// TILES
+// ════════════════════════════════════════════════════════════════════════════
+const T = { WALL:0, GRASS:1, FLOOR:2, SWALL:3, WATER:4, TREE:5, PATH:6, DWALL:7 };
+const PASSABLE = new Set([T.GRASS, T.FLOOR, T.PATH]);
+
+// ════════════════════════════════════════════════════════════════════════════
+// MAP — 64 cols × 64 rows  (village rows 0-12, dungeon rows 13-63)
+// ════════════════════════════════════════════════════════════════════════════
+// ── Editor typeTable: maps Monochrome tile ID → editor T type ─────────────────
+// Editor T: WALL=0 GRASS=1 WATER=2 SWALL=3 TREE=4 PATH=5 FLOOR=6 DWALL=7
+const EDITOR_TYPES = [2,2,0,2,0,0,4,4,4,4,0,0,0,0,0,0,0,1,1,1,1,1,1,5,5,1,5,5,1,5,5,5,1,1,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,3,3,3,3,3,3,3,7,3,3,3,3,3,6,6,6,6,6,6,6,6,6,6,0,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,1,1,0,0,0,6,6,0,0,0,6,6,2,2,0,0,0];
+// Remap editor type → game T: [WALL→WALL, GRASS→GRASS, WATER→WATER, SWALL→SWALL, TREE→TREE, PATH→PATH, FLOOR→FLOOR, DWALL→DWALL]
+const ETYPE_REMAP  = [0, 1, 4, 3, 5, 6, 2, 7];
+
+function buildMap() {
+  // ── Build visual map from editor JSON data ─────────────────────────────────
+  visualMap = Array.from({length: MAP_ROWS}, () => new Array(MAP_COLS).fill(-1));
+
+  // Sparse tile data (row → [[col, mt_id], ...]) — exported from map editor
+  // Player spawn at (11,10) was tile 119; replaced here with 22 (GRASS)
+  const DATA = {
+     5: [[6,7],[7,8],[8,8],[9,8],[10,8],[11,8],[12,8],[13,9]],
+     6: [[6,24],[7,22],[8,22],[9,22],[10,22],[11,22],[12,22],[13,26]],
+     7: [[6,24],[7,22],[8,22],[9,122],[10,22],[11,22],[12,22],[13,26]],
+     8: [[6,24],[7,22],[8,22],[9,22],[10,22],[11,121],[12,22],[13,26]],
+     9: [[6,24],[7,22],[8,22],[9,22],[10,22],[11,22],[12,22],[13,26]],
+    10: [[6,24],[7,22],[8,22],[9,22],[10,22],[11,22],[12,22],[13,26]],
+    11: [[6,24],[7,22],[8,22],[9,22],[10,22],[11,22],[12,22],[13,26]],
+    12: [[6,41],[7,42],[8,42],[9,42],[10,42],[11,42],[12,42],[13,43]],
+  };
+  for (const [row, cells] of Object.entries(DATA))
+    for (const [col, tid] of cells)
+      visualMap[+row][col] = tid;
+
+  // ── Derive gameMap (game T types) from visualMap ───────────────────────────
+  const m = Array.from({length: MAP_ROWS}, () => new Array(MAP_COLS).fill(T.WALL));
+  for (let r=0; r<MAP_ROWS; r++)
+    for (let c=0; c<MAP_COLS; c++) {
+      const mt = visualMap[r][c];
+      if (mt >= 0) m[r][c] = ETYPE_REMAP[EDITOR_TYPES[mt]];
+    }
+  return m;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SPAWN POSITIONS
+// ════════════════════════════════════════════════════════════════════════════
+const SPAWN = {
+  player:     { col:10, row:11 },
+  friendlies: [],
+  enemies:    [],
+};
+
+const TORCHES = [];
+
+// ════════════════════════════════════════════════════════════════════════════
+// SPRITE ATLAS  (0x72 16×16 DungeonTileset v5)
+// ════════════════════════════════════════════════════════════════════════════
+const SP = {
+  floors: [
+    {x:32, y:48, w:16,h:16},
+    {x:0,  y:32, w:16,h:16},
+    {x:16, y:32, w:16,h:16},
+    {x:32, y:32, w:16,h:16},
+  ],
+  wall_top:   {x:16,  y:0,  w:16,h:16},
+  wall_face:  {x:16,  y:16, w:16,h:16},
+  wall_outer: {x:272, y:0,  w:16,h:16},
+  column_top: {x:208, y:176,w:16,h:16},
+  torches: [
+    {x:129,y:152,w:14,h:23},{x:145,y:152,w:14,h:23},
+    {x:161,y:152,w:14,h:23},{x:177,y:152,w:14,h:23},
+    {x:193,y:152,w:14,h:23},{x:209,y:152,w:14,h:23},
+    {x:225,y:152,w:14,h:23},{x:241,y:152,w:14,h:23},
+  ],
+  hero:     {x:64,  y:128, w:16,h:16},
+  knight:   {x:224, y:236, w:16,h:20},
+  skeleton: {x:16,  y:144, w:16,h:16},
+  goblin:   {x:0,   y:160, w:16,h:16},
+  wizard:   {x:144, y:224, w:16,h:16},
+  merchant: {x:96,  y:240, w:16,h:16},
+};
+
+const sheet = new Image();
+let sheetReady = false;
+sheet.onload  = () => { sheetReady = true; };
+sheet.onerror = () => console.warn('Sprite atlas not found — using procedural graphics.');
+sheet.src = '0x72_16x16DungeonTileset.v5.png';
+
+// Iron sword sprite sheet  (128×256, 8 cols × 16 rows of 16×16 frames)
+const swordSheet = new Image();
+let swordReady = false;
+swordSheet.onload  = () => { swordReady = true; };
+swordSheet.onerror = () => console.warn('Sword sprite not found — using line art.');
+swordSheet.src = 'sword_iron_all_sheet.png';
+
+// ── Monochrome tileset  (asset/Monochrome/Tilemap/tilemap_packed.png) ────────
+// 17 cols × 8 rows of 16×16px tiles, no gap (packed).
+// Source coord: x=(id%17)*16, y=floor(id/17)*16
+const monoSheet = new Image();
+let monoReady = false;
+monoSheet.onload  = () => { monoReady = true; };
+monoSheet.onerror = () => console.warn('Monochrome tileset not found.');
+monoSheet.src = 'asset/Monochrome/Tilemap/tilemap_packed.png';
+
+// Tile IDs from the Monochrome sheet (row×17 + col):
+const MT = {
+  // Row 0 — water, void, trees, buildings
+  WATER_A:   0,  WATER_B:   1,   // animated water pair
+  VOID:      2,                   // empty void tile
+  TREE_S:    6,  TREE_M:    7,  TREE_L:  8,   // trees small→large
+  HOUSE_S:  10,  HOUSE_M:  12,  HOUSE_L: 14,  // buildings
+  // Row 1 — outdoor terrain (col offsets from row base 17)
+  GRASS:    22,   // speckled ground  (row 1, col 5)
+  GRASS2:   25,   // denser speckle   (row 1, col 8)
+  PATH_T:   26,   // light gray solid (row 1, col 9)
+  // Row 2 — stone floor variants
+  FLOOR_A:  34,  FLOOR_B:  35,  FLOOR_C:  36,
+  // Row 3 — dungeon walls / special
+  WALL_S:   51,   // solid wall top
+  WALL_T:   52,   // wall top/shadow
+  PILLAR:   58,   // pillar pair
+  BRICK_B:  59,   // stone block
+  BRICK_W:  60,   // brick wall face
+};
+
+// Draw a Monochrome tile tinted with multiply-blend.
+// 1) fill solid tint → 2) multiply tile texture on top.
+// Result: white tile pixels = tint color; dark pixels stay dark.
+function drawMonoTile(id, dx, dy, tint) {
+  ctx.fillStyle = tint;
+  ctx.fillRect(dx, dy, TS, TS);
+  if (monoReady) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.drawImage(monoSheet, (id%17)*16, Math.floor(id/17)*16, 16, 16, dx, dy, TS, TS);
+    ctx.restore();
+  }
+}
+
+// Draw one 16×16 sprite stretched to fill a TS×TS tile at (dx,dy)
+function sprTile(s, dx, dy) {
+  ctx.drawImage(sheet, s.x, s.y, s.w, s.h, dx, dy, TS, TS);
+}
+
+// Draw a static entity sprite, feet at (cx, cy)
+function sprEnt(s, cx, cy, flipX=false) {
+  const sc = TS / 16;
+  const dw = s.w * sc, dh = s.h * sc;
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (flipX) ctx.scale(-1, 1);
+  ctx.drawImage(sheet, s.x, s.y, s.w, s.h, -dw/2, -dh, dw, dh);
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ANIMATED ENTITY SPRITE
+// ════════════════════════════════════════════════════════════════════════════
+function sprEntAnim(s, cx, cy, flipX, state, now, deathP=0) {
+  const sc = TS / 16;
+  const dw = s.w * sc, dh = s.h * sc;
+
+  let offX=0, offY=0, scX=1, scY=1, rot=0;
+
+  switch (state) {
+    case 'idle':
+      offY = Math.sin(now * 0.0024) * 0.9;
+      break;
+    case 'walk': {
+      const f = Math.floor(now / 125) % 4;
+      offY = [0, -1.8, 0,  1.2][f];
+      rot  = [0, -0.07, 0, 0.07][f];
+      scX  = [1,  0.90, 1, 1.10][f];
+      scY  = [1,  1.12, 1, 0.88][f];
+      break;
+    }
+    case 'attack':
+      rot  =  0.28;
+      offY = -2.5;
+      scX  =  1.12;
+      scY  =  0.86;
+      break;
+    case 'dash':
+      scX  =  1.45;
+      scY  =  0.68;
+      offY =  3;
+      break;
+    case 'hurt':
+      offX = ((Math.floor(now / 32) % 2) * 2 - 1) * 2;
+      break;
+    case 'death': {
+      const p = Math.min(1, deathP * 1.25);
+      rot  = (Math.PI / 2) * p;
+      offY = dh * 0.22 * p;
+      scY  = Math.max(0.45, 1 - 0.45 * p);
+      break;
+    }
+  }
+
+  const groundOff = TS * 0.5;
+
+  ctx.save();
+  ctx.translate(cx + offX, cy + offY + groundOff);
+  if (flipX) ctx.scale(-1, 1);
+  ctx.rotate(rot);
+  ctx.scale(scX, scY);
+  ctx.drawImage(sheet, s.x, s.y, s.w, s.h, -dw/2, -dh, dw, dh);
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CANVAS + CAMERA
+// ════════════════════════════════════════════════════════════════════════════
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+canvas.width = VW; canvas.height = VH;
+
+// Camera: updated each frame to follow player, clamped to world bounds
+const cam = { x:0, y:0 };
+
+const hudCanvas = document.getElementById('hud');
+const hudCtx    = hudCanvas.getContext('2d');
+let   hudScale  = 1;
+
+const wrap = document.getElementById('game-wrap');
+function fitToScreen() {
+  const s = Math.min(window.innerWidth / VW, window.innerHeight / VH);
+  hudScale = s;
+  wrap.style.width  = VW + 'px';
+  wrap.style.height = VH + 'px';
+  wrap.style.left   = Math.round((window.innerWidth  - VW * s) / 2) + 'px';
+  wrap.style.top    = Math.round((window.innerHeight - VH * s) / 2) + 'px';
+  wrap.style.transform = `scale(${s})`;
+  const hw = Math.round(VW * s), hh = Math.round(VH * s);
+  hudCanvas.width  = hw;
+  hudCanvas.height = hh;
+  hudCanvas.style.left = Math.round((window.innerWidth  - hw) / 2) + 'px';
+  hudCanvas.style.top  = Math.round((window.innerHeight - hh) / 2) + 'px';
+}
+window.addEventListener('resize', fitToScreen);
+fitToScreen();
+
+function hX(sx) { return sx * hudScale; }
+function hY(sy) { return sy * hudScale; }
+function hF(px) { return Math.round(px * hudScale); }
+
+// ════════════════════════════════════════════════════════════════════════════
+// INPUT
+// ════════════════════════════════════════════════════════════════════════════
+const keys = {}, keysHeld = {};
+const mouse = { wx:0, wy:0, justDown:false };
+
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (!gameStarted) startGame();
+});
+document.addEventListener('keyup', e => {
+  keys[e.code] = false;
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+    if (!keys['ShiftLeft'] && !keys['ShiftRight']) keysHeld['Shift'] = false;
+  } else {
+    keysHeld[e.code] = false;
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.wx = (e.clientX - r.left) * (VW / r.width)  + cam.x;
+  mouse.wy = (e.clientY - r.top)  * (VH / r.height) + cam.y;
+});
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 0) mouse.justDown = true;
+  if (!gameStarted) startGame();
+});
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ════════════════════════════════════════════════════════════════════════════
+// MATH
+// ════════════════════════════════════════════════════════════════════════════
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const dist  = (ax,ay,bx,by) => Math.hypot(ax-bx, ay-by);
+const ang   = (ax,ay,bx,by) => Math.atan2(by-ay, bx-ax);
+const normAngle = a => { while(a>Math.PI)a-=Math.PI*2; while(a<-Math.PI)a+=Math.PI*2; return a; };
+
+// ════════════════════════════════════════════════════════════════════════════
+// PARTICLES + FLOAT TEXTS
+// ════════════════════════════════════════════════════════════════════════════
+const particles = [], floatTexts = [];
+
+function spawnParticles(x,y,color,count,spd,life) {
+  for (let i=0;i<count;i++) {
+    const a = Math.random()*Math.PI*2, s = spd*(0.4+Math.random()*0.6);
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life,maxLife:life,color,sz:3+Math.random()*4});
+  }
+}
+function spawnSparks(x,y,angle) {
+  for (let i=0;i<8;i++) {
+    const a=angle+(Math.random()-0.5)*2, s=(80+Math.random()*120)*TILE_SCALE;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:0.28,maxLife:0.28,
+      color:Math.random()>0.5?'#ffe844':'#ff8800',sz:2+Math.random()*3});
+  }
+}
+function spawnBlood(x,y,angle) {
+  for (let i=0;i<8;i++) {
+    const a=angle+(Math.random()-0.5)*1.8, s=(45+Math.random()*80)*TILE_SCALE;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:0.5,maxLife:0.5,
+      color:Math.random()>0.4?'#cc1111':'#881111',sz:2+Math.random()*3});
+  }
+}
+function spawnFloat(x,y,text,color='#fff') {
+  floatTexts.push({x,y,text,color,life:1.1,vy:-36*TILE_SCALE});
+}
+
+function updateParticles(dt) {
+  for (let i=particles.length-1;i>=0;i--) {
+    const p=particles[i];
+    p.x+=p.vx*dt; p.y+=p.vy*dt;
+    p.vx*=Math.pow(0.04,dt); p.vy*=Math.pow(0.04,dt);
+    p.life-=dt; if(p.life<=0) particles.splice(i,1);
+  }
+}
+function updateFloats(dt) {
+  for (let i=floatTexts.length-1;i>=0;i--) {
+    const t=floatTexts[i]; t.y+=t.vy*dt; t.life-=dt;
+    if(t.life<=0) floatTexts.splice(i,1);
+  }
+}
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.globalAlpha = clamp(p.life/p.maxLife,0,1);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x-cam.x, p.y-cam.y, p.sz*(p.life/p.maxLife), 0, Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+function drawFloats() {
+  const hs = hudScale;
+  hudCtx.font=`bold ${hF(13)}px Georgia`;
+  floatTexts.forEach(t => {
+    const fx = hX(t.x - cam.x), fy = hY(t.y - cam.y);
+    hudCtx.globalAlpha = clamp(t.life,0,1);
+    hudCtx.textAlign='center';
+    hudCtx.strokeStyle='#000'; hudCtx.lineWidth=3*hs;
+    hudCtx.strokeText(t.text, fx, fy);
+    hudCtx.fillStyle=t.color; hudCtx.fillText(t.text, fx, fy);
+  });
+  hudCtx.globalAlpha=1; hudCtx.textAlign='left';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TILE RENDERING
+// ════════════════════════════════════════════════════════════════════════════
+function tileRng(r,c) { return (((Math.sin(r*127.1+c*311.7)*43758.5)%1)+1)%1; }
+
+let gameMap;
+let visualMap;
+
+// ── World / Map-travel state ───────────────────────────────────────────────
+let worldData         = null;   // parsed world.json
+let currentWorldMapId = null;
+const worldTileCache  = new Map(); // tileId → off-screen canvas (16×16) for custom tiles
+
+// Transition: fade-to-black between maps
+let mapTrans = { active:false, phase:'none', timer:0, toMapId:null, toRow:0, toCol:0 };
+
+// Return off-screen 16×16 canvas for a custom tile's pixel edits, cached.
+function getWorldTileCanvas(mt) {
+  if (worldTileCache.has(mt)) return worldTileCache.get(mt);
+  const ct = worldData?.customTiles?.[mt];
+  if (!ct?.pixels) { worldTileCache.set(mt, null); return null; }
+  const cv = document.createElement('canvas'); cv.width = cv.height = 16;
+  const cx = cv.getContext('2d');
+  const id = cx.createImageData(16, 16); id.data.set(ct.pixels);
+  cx.putImageData(id, 0, 0);
+  worldTileCache.set(mt, cv);
+  return cv;
+}
+
+function drawTile(r,c) {
+  const dx = c*TS - cam.x, dy = r*TS - cam.y;
+  const mt = visualMap[r][c];
+  if (mt < 0) {
+    ctx.fillStyle = '#161412';
+    ctx.fillRect(dx, dy, TS, TS);
+    return;
+  }
+  if (worldData) {
+    // Use world tintTable; support custom pixel tiles
+    const tint = worldData.tintTable?.[mt] || '#4b6271';
+    ctx.fillStyle = tint;
+    ctx.fillRect(dx, dy, TS, TS);
+    ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.imageSmoothingEnabled = false;
+    const ct    = worldData.customTiles?.[mt];
+    const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : mt;
+    if (baseId >= 0 && monoReady)
+      ctx.drawImage(monoSheet, (baseId%17)*16, Math.floor(baseId/17)*16, 16, 16, dx, dy, TS, TS);
+    if (ct?.pixels) { const cv = getWorldTileCanvas(mt); if (cv) ctx.drawImage(cv, dx, dy, TS, TS); }
+    ctx.restore();
+  } else {
+    drawMonoTile(mt, dx, dy, '#4b6271');
+  }
+}
+
+// Only draw tiles actually visible in the viewport
+function drawMap() {
+  const c0 = Math.max(0, Math.floor(cam.x / TS));
+  const c1 = Math.min(MAP_COLS - 1, Math.ceil((cam.x + VW) / TS));
+  const r0 = Math.max(0, Math.floor(cam.y / TS));
+  const r1 = Math.min(MAP_ROWS - 1, Math.ceil((cam.y + VH) / TS));
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++)
+      drawTile(r, c);
+}
+
+function drawTorches() {
+  const now = Date.now();
+  TORCHES.forEach(([c,r]) => {
+    const wx = c*TS + TS/2, wy = r*TS + TS/2;
+    // Skip off-screen torches
+    const sx = wx - cam.x, sy = wy - cam.y;
+    if (sx < -100 || sx > VW+100 || sy < -100 || sy > VH+100) return;
+
+    const fl = 0.82 + 0.18*Math.sin(now*0.007 + r*5 + c*3);
+    const glowR = 44 * TILE_SCALE * fl;
+    const grad = ctx.createRadialGradient(sx,sy,1,sx,sy,glowR);
+    grad.addColorStop(0,  `rgba(255,200,80,${0.4*fl})`);
+    grad.addColorStop(0.5,`rgba(255,110,20,${0.14*fl})`);
+    grad.addColorStop(1,  'rgba(0,0,0,0)');
+    ctx.fillStyle=grad;
+    ctx.fillRect(sx-glowR, sy-glowR, glowR*2, glowR*2);
+
+    if (sheetReady) {
+      const frame = (Math.floor(now / 100)) % 8;
+      const tf = SP.torches[frame];
+      const scale = TS / 16;
+      const dw = tf.w * scale, dh = tf.h * scale;
+      ctx.drawImage(sheet, tf.x, tf.y, tf.w, tf.h, sx - dw/2, sy - dh, dw, dh);
+    } else {
+      ctx.fillStyle='#6a4a20'; ctx.fillRect(sx-1,sy-5,2,9);
+      ctx.fillStyle=`rgba(255,${130+fl*60|0},20,${0.9*fl})`;
+      ctx.beginPath(); ctx.ellipse(sx,sy-8,3,5*fl,0,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle=`rgba(255,230,100,${0.85*fl})`;
+      ctx.beginPath(); ctx.ellipse(sx,sy-9,1.5,3*fl,0,0,Math.PI*2); ctx.fill();
+    }
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// COLLISION
+// ════════════════════════════════════════════════════════════════════════════
+function getEditorType(mt) {
+  // World typeTable overrides defaults (also covers custom tiles ≥136)
+  if (worldData?.typeTable?.[mt] !== undefined) return worldData.typeTable[mt];
+  if (mt < EDITOR_TYPES.length) return EDITOR_TYPES[mt];
+  return 0; // unknown custom tile → impassable
+}
+
+function passable(row,col) {
+  if (row<0||row>=MAP_ROWS||col<0||col>=MAP_COLS) return false;
+  const mt = visualMap[row][col];
+  if (mt < 0) return false;
+  const et = getEditorType(mt);
+  return et === 1 || et === 5 || et === 6; // editor GRASS, PATH, FLOOR
+}
+
+function resolveCollision(entity, nx, ny) {
+  const r = entity.radius * 0.50;
+  const S = 0.707 * r;
+  const pts = [
+    [ r, 0], [-r, 0], [0, -r], [0, r],
+    [ S, S], [-S, S], [ S,-S], [-S,-S],
+  ];
+  let xOk = true, yOk = true;
+  for (const [dx, dy] of pts) {
+    if (!passable(Math.floor((entity.y + dy) / TS), Math.floor((nx + dx) / TS))) {
+      xOk = false; break;
+    }
+  }
+  for (const [dx, dy] of pts) {
+    if (!passable(Math.floor((ny + dy) / TS), Math.floor((entity.x + dx) / TS))) {
+      yOk = false; break;
+    }
+  }
+  return { x: xOk ? nx : entity.x, y: yOk ? ny : entity.y };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SPRITE DRAWING
+// ════════════════════════════════════════════════════════════════════════════
+function drawShadow(x,y,r) {
+  const sx=x-cam.x, sy=y-cam.y+TS*0.5;
+  ctx.save(); ctx.translate(sx,sy); ctx.scale(1,0.35);
+  ctx.fillStyle='rgba(0,0,0,0.26)';
+  ctx.beginPath(); ctx.ellipse(0,r*0.4,r*0.85,r*0.4,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+// ── Player character — Monochrome tile 119 (HELMET) with gold tint ───────────
+function drawKnight(x,y,atkAngle,atkTimer,dashActive,facingRight,animState='idle') {
+  const dx = x - cam.x - TS/2;
+  const dy = y - cam.y - TS/2;
+  // Bob animation when moving
+  const mv  = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD'];
+  const bob = mv ? Math.sin(Date.now()*0.009) * (TS * 0.05) : 0;
+  // Tint flashes lighter on hurt
+  const tint = '#ffd060';
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = tint;
+  ctx.fillRect(dx, dy + bob, TS, TS);
+  if (monoReady) {
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.drawImage(monoSheet,
+      (119 % 17) * 16, Math.floor(119 / 17) * 16, 16, 16,
+      dx, dy + bob, TS, TS);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  ctx.restore();
+}
+
+// ── Skeleton (enemy) ─────────────────────────────────────────────────────────
+function drawSkeleton(x,y,facingRight,animState='idle',deathP=0) {
+  if (sheetReady) {
+    const sx=x-cam.x, sy=y-cam.y;
+    sprEntAnim(SP.skeleton, sx, sy, !facingRight, animState, Date.now(), deathP);
+    return;
+  }
+  const sx=x-cam.x, sy=y-cam.y;
+  const flip=facingRight?1:-1, now=Date.now();
+  const bone='#d8cfa8', dark='#b0a880';
+
+  ctx.save();
+  ctx.translate(sx,sy);
+  ctx.scale(SS*flip, SS);
+
+  const wk=Math.sin(now*0.006)*2.5;
+  ctx.fillStyle=bone; ctx.fillRect(-5,6,3,10+Math.max(0,wk)); ctx.fillRect(2,6,3,10-Math.max(0,wk));
+  ctx.fillStyle=dark;
+  ctx.beginPath(); ctx.arc(-3.5,12,2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(3.5,12,2,0,Math.PI*2);  ctx.fill();
+  ctx.fillStyle=bone; ctx.fillRect(-7,14+Math.max(0,wk),5,3); ctx.fillRect(2,14-Math.max(0,wk),5,3);
+  ctx.fillStyle=dark;  ctx.fillRect(-6,4,12,4);
+  ctx.fillStyle=bone;  ctx.fillRect(-8,-8,16,14);
+  ctx.strokeStyle=dark; ctx.lineWidth=1.2;
+  for (let i=0;i<3;i++) {
+    ctx.beginPath();
+    ctx.moveTo(-7,-5+i*4); ctx.lineTo(-2,-2+i*4);
+    ctx.moveTo(7,-5+i*4);  ctx.lineTo(2,-2+i*4);
+    ctx.stroke();
+  }
+  ctx.fillStyle=dark; ctx.fillRect(-1.5,-8,3,14);
+  ctx.save(); ctx.translate(8,-2); ctx.rotate(Math.sin(now*0.004)*0.25-0.2);
+  ctx.fillStyle=bone; ctx.fillRect(0,-2,12,3);
+  ctx.fillStyle='#777'; ctx.fillRect(11,-8,2,18);
+  ctx.fillStyle='#999'; ctx.fillRect(8,-6,8,2);
+  ctx.restore();
+  ctx.save(); ctx.translate(-8,-2); ctx.rotate(Math.sin(now*0.004+1.2)*0.2);
+  ctx.fillStyle=bone; ctx.fillRect(-12,-2,12,3);
+  ctx.restore();
+  ctx.fillStyle=bone;  ctx.beginPath(); ctx.arc(0,-15,9,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=dark;  ctx.fillRect(-6,-10,12,4);
+  ctx.fillStyle=bone;  for(let i=0;i<3;i++) ctx.fillRect(-5+i*4,-10,2,3);
+  ctx.fillStyle='#ff2200'; ctx.shadowColor='#ff5500'; ctx.shadowBlur=8;
+  ctx.beginPath(); ctx.arc(-3,-17,2.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(3,-17,2.5,0,Math.PI*2);  ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.strokeStyle=dark; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(2,-24); ctx.lineTo(4,-16); ctx.lineTo(2,-11); ctx.stroke();
+
+  ctx.restore();
+}
+
+// ── Goblin (enemy) ───────────────────────────────────────────────────────────
+function drawGoblin(x,y,facingRight,animState='idle',deathP=0) {
+  if (sheetReady) {
+    const sx=x-cam.x, sy=y-cam.y;
+    sprEntAnim(SP.goblin, sx, sy, !facingRight, animState, Date.now(), deathP);
+    return;
+  }
+  const sx=x-cam.x, sy=y-cam.y;
+  const flip=facingRight?1:-1, now=Date.now();
+  const grn='#3a7a2a', dgrn='#286020';
+
+  ctx.save();
+  ctx.translate(sx,sy);
+  ctx.scale(SS*flip, SS);
+
+  const wk=Math.sin(now*0.007)*2;
+  ctx.fillStyle='#3a2a10'; ctx.fillRect(-5,5,4,8+Math.max(0,wk)); ctx.fillRect(1,5,4,8-Math.max(0,wk));
+  ctx.fillStyle=grn; ctx.fillRect(-8,-6,16,13);
+  ctx.fillStyle='#5a3a10'; ctx.fillRect(-7,-5,14,11);
+  ctx.strokeStyle='#7a5020'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(-6,-5); ctx.lineTo(5,5); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(6,-5);  ctx.lineTo(-5,5); ctx.stroke();
+  ctx.fillStyle=grn; ctx.fillRect(7,-5,8,4); ctx.fillRect(-15,-5,8,4);
+  ctx.fillStyle=dgrn; ctx.fillRect(14,-5,3,7); ctx.fillRect(-17,-5,3,7);
+  ctx.fillStyle='#7a5a20'; ctx.fillRect(14,-10,4,20);
+  ctx.fillStyle='#9a7a40'; ctx.fillRect(12,-9,8,4);
+  ctx.fillStyle='#888'; ctx.fillRect(16,-8,1,3);
+  ctx.fillStyle=grn; ctx.beginPath(); ctx.ellipse(0,-14,9,11,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-10,-13,5,3,-0.4,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(10,-13,5,3,0.4,0,Math.PI*2);   ctx.fill();
+  ctx.fillStyle='#eecc00';
+  ctx.beginPath(); ctx.arc(-3,-16,2.8,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(3,-16,2.8,0,Math.PI*2);  ctx.fill();
+  ctx.fillStyle='#222';
+  ctx.beginPath(); ctx.arc(-3,-16,1.2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(3,-16,1.2,0,Math.PI*2);  ctx.fill();
+  ctx.fillStyle='#2a5a1a'; ctx.beginPath(); ctx.arc(-6,-11,1.8,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=dgrn; ctx.beginPath(); ctx.arc(0,-12,3,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a4012';
+  ctx.beginPath(); ctx.arc(-1,-12,1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(1,-12,1,0,Math.PI*2);  ctx.fill();
+  ctx.fillStyle='#1a0a00'; ctx.beginPath(); ctx.arc(0,-7,4.5,0,Math.PI); ctx.fill();
+  ctx.fillStyle='#ddd'; ctx.fillRect(-3,-8,2,2); ctx.fillRect(1,-8,2,2);
+  ctx.fillStyle='#1a1a00'; ctx.fillRect(-6,-25,2,10); ctx.fillRect(-2,-26,2,11); ctx.fillRect(3,-25,2,9);
+
+  ctx.restore();
+}
+
+// ── NPC ───────────────────────────────────────────────────────────────────────
+function drawNPC(x,y,npc) {
+  const sx=x-cam.x, sy=y-cam.y;
+  const now=Date.now(), bob=Math.sin(now*0.0018)*1.2;
+  const near = dist(player.x,player.y,x,y) < 44 * TILE_SCALE;
+
+  if (sheetReady) {
+    sprEntAnim(npc.isElder ? SP.wizard : SP.merchant, sx, sy, false, 'idle', Date.now());
+  } else {
+  ctx.save();
+  ctx.translate(sx,sy);
+  ctx.scale(SS,SS);
+
+  if (npc.isElder) {
+    ctx.fillStyle='#223399';
+    ctx.beginPath(); ctx.moveTo(-11,-12); ctx.lineTo(11,-12); ctx.lineTo(14,18); ctx.lineTo(-14,18); ctx.fill();
+    ctx.fillStyle='#4466cc'; ctx.fillRect(-9,-11,18,5);
+    ctx.strokeStyle='#88aaff'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(0,0,5,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle='#7a5a20'; ctx.fillRect(12,-22,3,38);
+    ctx.fillStyle='#ffcc44'; ctx.beginPath(); ctx.arc(13,-24,6,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ffe888'; ctx.beginPath(); ctx.arc(13,-24,3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(150,180,255,0.45)'; ctx.beginPath(); ctx.arc(13,-24,7,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ddc090'; ctx.beginPath(); ctx.arc(0,-17+bob,8,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.moveTo(-6,-13+bob); ctx.lineTo(-8,3+bob); ctx.lineTo(0,1+bob); ctx.lineTo(8,3+bob); ctx.lineTo(6,-13+bob); ctx.fill();
+    ctx.fillStyle='#6688cc';
+    ctx.beginPath(); ctx.arc(-3,-19+bob,1.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(3,-19+bob,1.5,0,Math.PI*2);  ctx.fill();
+    ctx.fillStyle='#112277'; ctx.fillRect(-11,-27+bob,22,4);
+    ctx.beginPath(); ctx.moveTo(-7,-27+bob); ctx.lineTo(7,-27+bob); ctx.lineTo(3,-42+bob); ctx.lineTo(-3,-42+bob); ctx.fill();
+    ctx.fillStyle='#ffcc44'; ctx.beginPath(); ctx.arc(0,-41+bob,2,0,Math.PI*2); ctx.fill();
+  } else {
+    ctx.fillStyle='#cc8030'; ctx.fillRect(-8,-10,16,22);
+    ctx.fillStyle='#7a5020'; ctx.fillRect(-7,-9,14,18);
+    ctx.fillStyle='#aa6828'; ctx.fillRect(-6,-6,12,12);
+    ctx.fillStyle='#ddc090'; ctx.beginPath(); ctx.arc(0,-17+bob,8,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#cc3030'; ctx.fillRect(-7,-24+bob,14,6);
+    ctx.fillStyle='#6688cc';
+    ctx.beginPath(); ctx.arc(-3,-19+bob,1.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(3,-19+bob,1.5,0,Math.PI*2);  ctx.fill();
+    ctx.fillStyle='#cc2222'; ctx.fillRect(-10,-27+bob,20,4);
+    ctx.beginPath(); ctx.moveTo(-6,-27+bob); ctx.lineTo(6,-27+bob); ctx.lineTo(3,-38+bob); ctx.lineTo(-3,-38+bob); ctx.fill();
+    ctx.fillStyle='#ffdd44';
+    ctx.beginPath(); ctx.moveTo(9,-27+bob); ctx.quadraticCurveTo(16,-33+bob,13,-42+bob); ctx.quadraticCurveTo(10,-35+bob,9,-29+bob); ctx.fill();
+  }
+  ctx.restore();
+  }
+
+  // Name plate on HUD
+  const hs  = hudScale;
+  const hsx = hX(x - cam.x), hsy = hY(y - cam.y + TS * 0.5);
+  const npy = hsy - 30 * hs;
+  hudCtx.fillStyle = 'rgba(0,0,0,0.65)';
+  hudCtx.fillRect(hsx - 28*hs, npy - 14*hs, 56*hs, 13*hs);
+  hudCtx.fillStyle = '#ffe888';
+  hudCtx.font = `bold ${hF(10)}px Georgia`;
+  hudCtx.textAlign = 'center';
+  hudCtx.fillText(npc.name, hsx, npy - 4*hs);
+  if (near) {
+    hudCtx.fillStyle = '#aaffaa';
+    hudCtx.font = `${hF(9)}px Georgia`;
+    hudCtx.fillText('[E] Talk', hsx, npy - 18*hs);
+  }
+  hudCtx.textAlign = 'left';
+}
+
+function drawEnemyHP(x,y,hp,maxHP) {
+  const hs    = hudScale;
+  const bw    = 36 * hs;
+  const hsx   = hX(x - cam.x) - bw / 2;
+  const hsy   = hY(y - cam.y + TS * 0.5) - 30 * hs;
+  const ratio = hp / maxHP;
+  hudCtx.fillStyle = 'rgba(0,0,0,0.6)'; hudCtx.fillRect(hsx, hsy, bw, 7*hs);
+  hudCtx.fillStyle = ratio>0.5 ? '#44cc44' : ratio>0.25 ? '#ccaa22' : '#cc2222';
+  hudCtx.fillRect(hsx+1, hsy+1, (bw-2)*ratio, 5*hs);
+  hudCtx.strokeStyle = '#333'; hudCtx.lineWidth = 0.8*hs; hudCtx.strokeRect(hsx, hsy, bw, 7*hs);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SWORD SLASH  — sprite-based swing with ghost trails
+// ════════════════════════════════════════════════════════════════════════════
+function drawSwordArc(x, y, atkAngle, progress) {
+  const sx = x - cam.x, sy = y - cam.y + TS * 0.5;  // aligned to visual feet
+  const half   = CFG.atkArc / 2;
+  const aStart = atkAngle - half;
+  // Blade and hilt lengths scale with tile size
+  const BLADE  = TS * 2.3;    // ~147 px at TS=64  (≈2.3 tiles reach)
+  const HILT   = TS * 0.45;   // ~29 px at TS=64
+
+  // Fast snap ease-out
+  const swingT = 1 - Math.pow(1 - Math.min(progress / 0.68, 1), 2.6);
+  const curA   = aStart + CFG.atkArc * swingT;
+
+  // Global fade-out in the latter third of the animation
+  const alpha  = progress < 0.55 ? 1 : Math.max(0, 1 - (progress - 0.55) * 2.2);
+
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.globalAlpha = alpha;
+
+  // ── Ghost trails (5 fading lines sweeping back) ──────────────────────────
+  for (let i = 4; i >= 0; i--) {
+    const tT  = Math.max(0, swingT - (i + 1) * 0.13);
+    const tA  = aStart + CFG.atkArc * tT;
+    const fa  = (1 - i / 5) * 0.45;
+    const len = BLADE * (1 - i * 0.04);
+    ctx.strokeStyle = `rgba(160, 210, 255, ${fa})`;
+    ctx.lineWidth   = Math.max(1, (3.5 - i * 0.45) * (TS / 20));
+    ctx.lineCap     = 'round';
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(tA) * HILT, Math.sin(tA) * HILT);
+    ctx.lineTo(Math.cos(tA) * len,  Math.sin(tA) * len);
+    ctx.stroke();
+  }
+
+  // ── Main blade — sword sprite or bright line ──────────────────────────────
+  if (swordReady) {
+    // Draw sword sprite stretched along the blade, rotated to current swing angle
+    ctx.save();
+    ctx.rotate(curA);
+    const bladeLen = BLADE - HILT;
+    const bladeH   = TS * 0.22;          // visual thickness
+    // Source: row 4 (y=64), col 0 (x=0) — full sword frame
+    ctx.drawImage(swordSheet, 0, 64, 16, 16, HILT, -bladeH / 2, bladeLen, bladeH);
+    ctx.restore();
+  } else {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.96)';
+    ctx.lineWidth   = 3 * (TS / 20);
+    ctx.lineCap     = 'round';
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(curA) * HILT,  Math.sin(curA) * HILT);
+    ctx.lineTo(Math.cos(curA) * BLADE, Math.sin(curA) * BLADE);
+    ctx.stroke();
+  }
+
+  // ── Edge highlight ───────────────────────────────────────────────────────
+  const eA = curA + 0.055;
+  ctx.strokeStyle = 'rgba(140, 190, 255, 0.55)';
+  ctx.lineWidth   = 1.5 * (TS / 20);
+  ctx.lineCap     = 'round';
+  ctx.beginPath();
+  ctx.moveTo(Math.cos(eA) * HILT,  Math.sin(eA) * HILT);
+  ctx.lineTo(Math.cos(eA) * BLADE, Math.sin(eA) * BLADE);
+  ctx.stroke();
+
+  // ── Cross-guard glint at hilt ────────────────────────────────────────────
+  const gA = curA + Math.PI / 2;
+  const gLen = 6 * (TS / 20);
+  ctx.strokeStyle = `rgba(220, 190, 80, ${Math.max(0, 0.9 - progress * 1.2)})`;
+  ctx.lineWidth   = 2.5 * (TS / 20);
+  ctx.beginPath();
+  ctx.moveTo(Math.cos(curA)*HILT + Math.cos(gA)*gLen, Math.sin(curA)*HILT + Math.sin(gA)*gLen);
+  ctx.lineTo(Math.cos(curA)*HILT - Math.cos(gA)*gLen, Math.sin(curA)*HILT - Math.sin(gA)*gLen);
+  ctx.stroke();
+
+  // ── Tip flash ────────────────────────────────────────────────────────────
+  if (progress < 0.38) {
+    const tipX = Math.cos(curA) * BLADE;
+    const tipY = Math.sin(curA) * BLADE;
+    const fa   = (1 - progress / 0.38) * 0.88;
+    const gr   = TS * 0.55;
+    const g    = ctx.createRadialGradient(tipX, tipY, 0, tipX, tipY, gr);
+    g.addColorStop(0, `rgba(255, 255, 210, ${fa})`);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(tipX, tipY, gr, 0, Math.PI * 2); ctx.fill();
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DUNGEON FOG
+// ════════════════════════════════════════════════════════════════════════════
+function drawDungeonFog() {
+  const dungeonY = DUNGEON_ROW * TS;
+  if (player.y < dungeonY) return;
+  const alpha = 0.65;
+  const px = player.x - cam.x, py = player.y - cam.y;
+  const innerR = 28 * TILE_SCALE;
+  const outerR = 155 * TILE_SCALE;
+  const grad = ctx.createRadialGradient(px, py, innerR, px, py, outerR);
+  grad.addColorStop(0,    'rgba(0,0,0,0)');
+  grad.addColorStop(0.65, `rgba(0,0,0,${alpha*0.35})`);
+  grad.addColorStop(1,    `rgba(0,0,0,${alpha})`);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, VW, VH);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DIALOG
+// ════════════════════════════════════════════════════════════════════════════
+let activeDialog = null;
+
+function drawDialog() {
+  if (!activeDialog) return;
+  const hs = hudScale;
+  const dw=560*hs, dh=100*hs, dx=(VW*hs-dw)/2, dy=VH*hs-118*hs;
+  hudCtx.fillStyle='rgba(5,5,25,0.93)'; hudCtx.fillRect(dx,dy,dw,dh);
+  hudCtx.strokeStyle='#7766aa'; hudCtx.lineWidth=2; hudCtx.strokeRect(dx,dy,dw,dh);
+  hudCtx.strokeStyle='#4455aa'; hudCtx.lineWidth=1; hudCtx.strokeRect(dx+3,dy+3,dw-6,dh-6);
+  hudCtx.fillStyle='#ffcc44'; hudCtx.font=`bold ${hF(12)}px Georgia`;
+  hudCtx.fillText(activeDialog.npcName, dx+12, dy+20*hs);
+  hudCtx.fillStyle='#ddddff'; hudCtx.font=`${hF(12)}px Georgia`;
+  const words=activeDialog.lines[activeDialog.index].split(' ');
+  let row='',rows=[];
+  for (const w of words) {
+    const t=row+(row?' ':'')+w;
+    if (hudCtx.measureText(t).width>dw-26){rows.push(row);row=w;}else row=t;
+  }
+  rows.push(row);
+  rows.forEach((r,i)=>hudCtx.fillText(r,dx+12,dy+38*hs+i*17*hs));
+  hudCtx.fillStyle='#9988cc'; hudCtx.font=`${hF(10)}px Georgia`; hudCtx.textAlign='right';
+  const more=activeDialog.index<activeDialog.lines.length-1;
+  hudCtx.fillText(more?'[E] Continue':'[E] Close', dx+dw-8, dy+dh-6);
+  hudCtx.textAlign='left';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HUD
+// ════════════════════════════════════════════════════════════════════════════
+function drawHUD() {
+  const hs  = hudScale;
+  const hr  = 12*hs, hsp = 38*hs, hx0 = 16*hs, hy = 18*hs;
+
+  function drawHeart(cx,cy,r) {
+    hudCtx.beginPath();
+    hudCtx.moveTo(cx, cy+r*0.3);
+    hudCtx.bezierCurveTo(cx-r*1.2,cy-r*0.5, cx-r*1.2,cy-r*1.2, cx,cy-r*0.6);
+    hudCtx.bezierCurveTo(cx+r*1.2,cy-r*1.2, cx+r*1.2,cy-r*0.5, cx,cy+r*0.3);
+    hudCtx.fill();
+  }
+
+  for (let i=0;i<CFG.hearts;i++) {
+    const hHP   = Math.max(0, Math.min(CFG.heartHP, player.hp - i*CFG.heartHP));
+    const ratio = hHP / CFG.heartHP;
+    const hcx   = hx0 + i*hsp;
+    hudCtx.fillStyle='rgba(0,0,0,0.42)'; drawHeart(hcx+1,hy+1,hr);
+    hudCtx.fillStyle='#440011';          drawHeart(hcx,hy,hr);
+    if (ratio>0) {
+      hudCtx.save();
+      hudCtx.beginPath(); hudCtx.rect(hcx-hr*1.4,hy-hr*1.3,hr*2.8*ratio,hr*2); hudCtx.clip();
+      hudCtx.fillStyle = ratio>0.5?'#ee2233':'#cc1122'; drawHeart(hcx,hy,hr);
+      hudCtx.fillStyle = 'rgba(255,150,160,0.35)';
+      hudCtx.beginPath(); hudCtx.ellipse(hcx-3*hs,hy-6*hs,4*hs,2.5*hs,-0.5,0,Math.PI*2); hudCtx.fill();
+      hudCtx.restore();
+    }
+    hudCtx.fillStyle='rgba(255,255,255,0.82)';
+    hudCtx.font=`bold ${hF(6)}px monospace`;
+    hudCtx.textAlign='center';
+    hudCtx.fillText(Math.ceil(hHP), hcx, hy+4*hs);
+    hudCtx.textAlign='left';
+  }
+
+  const by = 40*hs;
+  const drawBar = (x,y,w,h,pct,fill,border,label) => {
+    hudCtx.fillStyle='rgba(0,0,0,0.52)'; hudCtx.fillRect(x,y,w,h);
+    hudCtx.fillStyle=fill; hudCtx.fillRect(x+1,y+1,(w-2)*pct,h-2);
+    hudCtx.strokeStyle=border; hudCtx.lineWidth=1; hudCtx.strokeRect(x,y,w,h);
+    hudCtx.fillStyle='#ccc'; hudCtx.font=`${hF(7)}px monospace`; hudCtx.fillText(label,x+4,y+h-2);
+  };
+  const dp = player.dashCooldown<=0 ? 1 : 1-(player.dashCooldown/CFG.dashCooldown);
+  const ap = player.atkCooldown<=0  ? 1 : 1-(player.atkCooldown/CFG.atkCooldown);
+  drawBar(14*hs, by,       108*hs, 11*hs, dp, dp<1?'#224488':'#4488ff','#5599dd','DASH '+(dp>=1?'READY':'...'));
+  drawBar(14*hs, by+13*hs, 108*hs, 11*hs, ap, ap<1?'#665520':'#ffcc44','#ccaa44','ATK  '+(ap>=1?'READY':'...'));
+
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PLAYER
+// ════════════════════════════════════════════════════════════════════════════
+const player = {
+  x: SPAWN.player.col*TS + TS/2,
+  y: SPAWN.player.row*TS + TS/2,
+  radius: Math.round(TS * 0.52),   // ~33 px — scales with tile size
+  hp: CFG.hearts*CFG.heartHP, maxHP: CFG.hearts*CFG.heartHP,
+  atkTimer:0, atkCooldown:0, atkAngle:0,
+  dashTimer:0, dashCooldown:0, dashVx:0, dashVy:0,
+  hurtTimer:0, invincTimer:0,
+  facingRight:true, dead:false, kills:0,
+};
+
+function doAttack() {
+  player.atkTimer    = CFG.atkDuration;
+  player.atkCooldown = CFG.atkCooldown;
+  player.atkAngle    = ang(player.x, player.y, mouse.wx, mouse.wy);
+  player.facingRight = mouse.wx > player.x;
+  for (const e of enemies) {
+    if (e.dead) continue;
+    const d = dist(player.x,player.y,e.x,e.y);
+    if (d > CFG.atkRange+e.radius) continue;
+    const a = ang(player.x,player.y,e.x,e.y);
+    if (Math.abs(normAngle(a-player.atkAngle)) > CFG.atkArc/2) continue;
+    e.hp -= CFG.atkDamage;
+    spawnSparks(e.x,e.y,player.atkAngle);
+    spawnBlood(e.x,e.y,player.atkAngle);
+    spawnFloat(e.x, e.y - 16*TILE_SCALE, `-${CFG.atkDamage}`, '#ffdd44');
+    const ka=ang(player.x,player.y,e.x,e.y);
+    e.vx=Math.cos(ka)*CFG.enemyKnockback; e.vy=Math.sin(ka)*CFG.enemyKnockback;
+    e.hurtTimer=0.25;
+    if (e.hp<=0) {
+      e.dead=true; e.deathTimer=0.6;
+      player.kills++;
+      spawnParticles(e.x,e.y,'#cc1111',18,100*TILE_SCALE,0.85);
+      spawnFloat(e.x, e.y - 22*TILE_SCALE, 'SLAIN!', '#ff4444');
+    }
+  }
+}
+
+function updatePlayer(dt) {
+  if (player.dead) return;
+  player.atkTimer    = Math.max(0,player.atkTimer-dt);
+  player.atkCooldown = Math.max(0,player.atkCooldown-dt);
+  player.dashTimer   = Math.max(0,player.dashTimer-dt);
+  player.dashCooldown= Math.max(0,player.dashCooldown-dt);
+  player.hurtTimer   = Math.max(0,player.hurtTimer-dt);
+  player.invincTimer = Math.max(0,player.invincTimer-dt);
+
+  if (mouse.justDown && player.atkCooldown<=0 && player.dashTimer<=0) doAttack();
+
+  const shiftDown = keys['ShiftLeft'] || keys['ShiftRight'];
+  if (shiftDown && !keysHeld['Shift']) {
+    keysHeld['Shift'] = true;
+    if (player.dashCooldown<=0 && player.dashTimer<=0) {
+      player.dashTimer    = CFG.dashDuration;
+      player.dashCooldown = CFG.dashCooldown;
+      player.invincTimer  = CFG.dashDuration+0.1;
+      let dx=0,dy=0;
+      if (keys['KeyW']||keys['ArrowUp'])    dy-=1;
+      if (keys['KeyS']||keys['ArrowDown'])  dy+=1;
+      if (keys['KeyA']||keys['ArrowLeft'])  dx-=1;
+      if (keys['KeyD']||keys['ArrowRight']) dx+=1;
+      if (!dx&&!dy) dx=player.facingRight?1:-1;
+      const len=Math.hypot(dx,dy)||1;
+      player.dashVx=(dx/len)*CFG.dashSpeed; player.dashVy=(dy/len)*CFG.dashSpeed;
+      spawnParticles(player.x,player.y,'#aaccff',12,65*TILE_SCALE,0.32);
+    }
+  }
+
+  let mx=0,my=0;
+  if (player.dashTimer>0) {
+    mx=player.dashVx; my=player.dashVy;
+  } else {
+    if (keys['KeyW']||keys['ArrowUp'])    my-=1;
+    if (keys['KeyS']||keys['ArrowDown'])  my+=1;
+    if (keys['KeyA']||keys['ArrowLeft'])  mx-=1;
+    if (keys['KeyD']||keys['ArrowRight']) mx+=1;
+    if (mx&&my){mx*=0.707;my*=0.707;}
+    mx*=CFG.playerSpeed; my*=CFG.playerSpeed;
+    if (mx) player.facingRight=mx>0;
+  }
+
+  const np=resolveCollision(player,player.x+mx*dt,player.y+my*dt);
+  player.x=np.x; player.y=np.y;
+
+  // Talk
+  if (keys['KeyE'] && !keysHeld['KeyE']) {
+    keysHeld['KeyE']=true;
+    if (activeDialog) {
+      activeDialog.index++;
+      if (activeDialog.index>=activeDialog.lines.length) activeDialog=null;
+    } else {
+      for (const npc of npcs)
+        if (dist(player.x,player.y,npc.x,npc.y) < 44 * TILE_SCALE) {
+          activeDialog={lines:npc.dialog,index:0,npcName:npc.name}; break;
+        }
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ENEMIES
+// ════════════════════════════════════════════════════════════════════════════
+let enemies = SPAWN.enemies.map(e => ({
+  x:e.col*TS+TS/2, y:e.row*TS+TS/2,
+  type:e.type, hp:e.hp, maxHP:e.hp,
+  radius: Math.round(TS * 0.52),   // same scale as player
+  vx:0, vy:0, atkCd:Math.random()*1.5,
+  hurtTimer:0, dead:false, deathTimer:0,
+  facingRight:false,
+  patrolX:e.col*TS+TS/2, patrolY:e.row*TS+TS/2,
+  patrolA:Math.random()*Math.PI*2, state:'patrol',
+}));
+
+function updateEnemies(dt) {
+  for (const e of enemies) {
+    if (e.dead) { e.deathTimer=Math.max(0,e.deathTimer-dt); continue; }
+    e.atkCd    =Math.max(0,e.atkCd-dt);
+    e.hurtTimer=Math.max(0,e.hurtTimer-dt);
+    const np=resolveCollision(e,e.x+e.vx*dt,e.y+e.vy*dt);
+    e.x=np.x; e.y=np.y;
+    e.vx*=Math.pow(0.04,dt); e.vy*=Math.pow(0.04,dt);
+    if (player.dead) continue;
+    const d=dist(e.x,e.y,player.x,player.y);
+    e.state=d<CFG.enemyAttackRange?'attack':d<CFG.enemyAggroRange?'chase':'patrol';
+    if (e.state!=='attack') {
+      let tx,ty;
+      if (e.state==='chase') { tx=player.x; ty=player.y; }
+      else {
+        const patrolRadius = 45 * TILE_SCALE;
+        const px2=e.patrolX+Math.cos(e.patrolA)*patrolRadius;
+        const py2=e.patrolY+Math.sin(e.patrolA)*patrolRadius;
+        if (dist(e.x,e.y,px2,py2)<8*TILE_SCALE) e.patrolA+=(Math.random()-0.5)*2.5;
+        tx=px2; ty=py2;
+      }
+      const spd=e.state==='chase'?CFG.enemySpeed:CFG.enemySpeed*0.35;
+      const a=ang(e.x,e.y,tx,ty);
+      const ep=resolveCollision(e,e.x+Math.cos(a)*spd*dt,e.y+Math.sin(a)*spd*dt);
+      e.x=ep.x; e.y=ep.y;
+      e.facingRight=tx>e.x;
+    }
+    if (e.state==='attack' && e.atkCd<=0 && player.invincTimer<=0) {
+      e.atkCd=CFG.enemyAttackCooldown;
+      player.hp-=CFG.enemyAttackDamage;
+      player.hurtTimer=0.35; player.invincTimer=0.55;
+      spawnParticles(player.x,player.y,'#ff3333',8,65*TILE_SCALE,0.4);
+      spawnFloat(player.x, player.y-24*TILE_SCALE, `-${CFG.enemyAttackDamage}`, '#ff6666');
+      if (player.hp<=0) { player.hp=0; player.dead=true; setTimeout(showDeathScreen,1400); }
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// NPCS
+// ════════════════════════════════════════════════════════════════════════════
+let npcs = SPAWN.friendlies.map(n => ({
+  x:n.col*TS+TS/2, y:n.row*TS+TS/2,
+  name:n.name, dialog:n.dialog, isElder:n.isElder,
+}));
+
+// ════════════════════════════════════════════════════════════════════════════
+// WORLD / MAP TRAVEL
+// ════════════════════════════════════════════════════════════════════════════
+
+function activateWorldMap(mapId, spawnRow, spawnCol) {
+  const m = worldData?.maps?.find(m => m.id === mapId);
+  if (!m) { console.warn('activateWorldMap: map not found', mapId); return; }
+  currentWorldMapId = mapId;
+
+  // Rebuild visualMap from world map data
+  visualMap = m.tileMap.map(r => [...r]);
+  worldTileCache.clear(); // flush per-tile canvas cache on map change
+
+  // Move player to entry point
+  player.x = (spawnCol + 0.5) * TS;
+  player.y = (spawnRow + 0.5) * TS;
+  player.vx = 0; player.vy = 0;
+
+  // Clear entities (no enemies in world maps by default)
+  enemies = []; npcs = [];
+  victoryDone = true; // no victory condition without enemies
+
+  // Snap camera immediately
+  cam.x = clamp(player.x - VW/2, 0, MAP_COLS*TS - VW);
+  cam.y = clamp(player.y - VH/2, 0, MAP_ROWS*TS - VH);
+}
+
+function triggerMapTransition(toMapId, toRow, toCol) {
+  if (mapTrans.active) return;
+  mapTrans = { active:true, phase:'out', timer:0, toMapId, toRow, toCol };
+}
+
+function checkMapExits() {
+  if (!worldData || !currentWorldMapId || mapTrans.active || player.dead) return;
+  const curMap = worldData.maps.find(m => m.id === currentWorldMapId);
+  if (!curMap?.exits?.length) return;
+  const pr = Math.floor(player.y / TS);
+  const pc = Math.floor(player.x / TS);
+  for (const exit of curMap.exits) {
+    if (exit.fromRow === pr && exit.fromCol === pc) {
+      triggerMapTransition(exit.toMapId, exit.toRow, exit.toCol);
+      break;
+    }
+  }
+}
+
+function loadWorldFile() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.json';
+  inp.onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.version !== 3 || !Array.isArray(data.maps) || !data.maps.length)
+          throw new Error('Not a valid world.json (need version 3)');
+        worldData = data;
+        worldTileCache.clear();
+        const startId = data.currentMapId || data.maps[0].id;
+        const startMap = data.maps.find(m => m.id === startId) || data.maps[0];
+        // Use first map's center as a safe spawn if no explicit spawn
+        activateWorldMap(startMap.id, Math.floor(startMap.rows/2), Math.floor(startMap.cols/2));
+        console.log('World loaded:', data.maps.length, 'maps');
+      } catch(err) { alert('World load error: ' + err.message); }
+    };
+    reader.readAsText(file);
+  };
+  inp.click();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SCREENS
+// ════════════════════════════════════════════════════════════════════════════
+const overlay = document.getElementById('overlay');
+let gameStarted=false, victoryDone=false;
+
+function startGame() {
+  if (gameStarted) return;
+  gameStarted=true; overlay.style.display='none';
+  requestAnimationFrame(gameLoop);
+}
+function showDeathScreen() {
+  overlay.innerHTML=`<h1 style="color:#cc1122">⚰ You Have Fallen</h1>
+    <div class="sub">The darkness claims another champion...<br><br>
+      <span style="color:#ffcc44;font-size:17px">Enemies slain: ${player.kills} / ${SPAWN.enemies.length}</span></div>
+    <div class="prompt" style="margin-top:24px">Click or press any key to restart</div>`;
+  overlay.style.display='flex'; gameStarted=false;
+  document.addEventListener('keydown',()=>location.reload(),{once:true});
+  canvas.addEventListener('click',()=>location.reload(),{once:true});
+}
+function showVictoryScreen() {
+  overlay.innerHTML=`<h1 style="color:#ffcc44">⚔ Victory!</h1>
+    <div class="sub">The dungeon is purged. The realm breathes free.<br><br>
+      <span style="color:#88ff88;font-size:17px">All ${SPAWN.enemies.length} enemies defeated!</span></div>
+    <div class="prompt" style="margin-top:24px">Click or press any key to play again</div>`;
+  overlay.style.display='flex'; gameStarted=false;
+  document.addEventListener('keydown',()=>location.reload(),{once:true});
+  canvas.addEventListener('click',()=>location.reload(),{once:true});
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GAME LOOP
+// ════════════════════════════════════════════════════════════════════════════
+let lastTime=0;
+
+function gameLoop(ts) {
+  const dt=Math.min((ts-lastTime)/1000,0.05);
+  lastTime=ts;
+
+  updatePlayer(dt);
+  checkMapExits();
+  updateEnemies(dt);
+  updateParticles(dt);
+  updateFloats(dt);
+  mouse.justDown=false;
+
+  // ── Map transition: fade to black → switch → fade back ───────────────────
+  if (mapTrans.active) {
+    mapTrans.timer += dt;
+    const FADE = 0.28; // seconds per half
+    if (mapTrans.phase === 'out' && mapTrans.timer >= FADE) {
+      activateWorldMap(mapTrans.toMapId, mapTrans.toRow, mapTrans.toCol);
+      mapTrans.phase = 'in'; mapTrans.timer = 0;
+    } else if (mapTrans.phase === 'in' && mapTrans.timer >= FADE) {
+      mapTrans.active = false; mapTrans.phase = 'none';
+    }
+  }
+
+  // ── Camera: smoothly follow player, clamped to world bounds ──────────────
+  const worldW = MAP_COLS * TS;
+  const worldH = MAP_ROWS * TS;
+  const targetCamX = clamp(player.x - VW/2, 0, worldW - VW);
+  const targetCamY = clamp(player.y - VH/2, 0, worldH - VH);
+  // Smooth follow (lerp toward target)
+  cam.x += (targetCamX - cam.x) * Math.min(1, dt * 8);
+  cam.y += (targetCamY - cam.y) * Math.min(1, dt * 8);
+  // Snap if very close (prevents sub-pixel drift)
+  if (Math.abs(cam.x - targetCamX) < 0.5) cam.x = targetCamX;
+  if (Math.abs(cam.y - targetCamY) < 0.5) cam.y = targetCamY;
+
+  if (!victoryDone && !player.dead && enemies.length > 0 && enemies.every(e=>e.dead)) {
+    victoryDone=true; setTimeout(showVictoryScreen,1500);
+  }
+
+  // ── Draw ─────────────────────────────────────────────────────────────────
+  ctx.fillStyle='#1a1a1a'; ctx.fillRect(0,0,VW,VH);
+  hudCtx.clearRect(0,0,hudCanvas.width,hudCanvas.height);
+
+  drawMap();
+  drawTorches();
+
+  // Shadows
+  drawShadow(player.x,player.y,player.radius);
+  npcs.forEach(n=>drawShadow(n.x,n.y, Math.round(TS*0.35)));
+  enemies.forEach(e=>{ if(!e.dead||e.deathTimer>0) drawShadow(e.x,e.y,e.radius); });
+
+  // NPCs
+  npcs.forEach(n=>drawNPC(n.x,n.y,n));
+
+  // Enemies
+  enemies.forEach(e => {
+    if (e.dead && e.deathTimer<=0) return;
+    const deathP  = e.dead ? 1 - e.deathTimer/0.6 : 0;
+    const eAnim   = e.dead             ? 'death'  :
+                    e.hurtTimer > 0   ? 'hurt'   :
+                    e.state==='attack' ? 'attack' :
+                    e.state==='chase'  ? 'walk'   : 'idle';
+    const alpha   = e.dead ? clamp(e.deathTimer/0.6,0,1) : 1;
+    ctx.globalAlpha = e.hurtTimer>0 ? 0.4+0.6*Math.abs(Math.sin(e.hurtTimer*22)) : alpha;
+    if (e.type==='skeleton') drawSkeleton(e.x,e.y,e.facingRight, eAnim, deathP);
+    else                     drawGoblin  (e.x,e.y,e.facingRight, eAnim, deathP);
+    ctx.globalAlpha=1;
+    if (!e.dead) drawEnemyHP(e.x,e.y,e.hp,e.maxHP);
+  });
+
+  // Sword arc
+  if (player.atkTimer>0)
+    drawSwordArc(player.x, player.y, player.atkAngle, 1-player.atkTimer/CFG.atkDuration);
+
+  // Player
+  const moving = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD'];
+  const pAnim  = player.dead           ? 'death'  :
+                 player.hurtTimer > 0  ? 'hurt'   :
+                 player.dashTimer > 0  ? 'dash'   :
+                 player.atkTimer  > 0  ? 'attack' :
+                 moving                ? 'walk'   : 'idle';
+  if (!player.dead) {
+    ctx.globalAlpha = player.invincTimer>0 ? 0.4+0.6*Math.abs(Math.sin(player.invincTimer*22)) : 1;
+    drawKnight(player.x,player.y,player.atkAngle,player.atkTimer,player.dashTimer>0,player.facingRight,pAnim);
+    ctx.globalAlpha=1;
+  }
+
+  drawParticles();
+  drawFloats();
+  drawDialog();
+  drawHUD();
+
+  // ── Map transition black overlay ──────────────────────────────────────────
+  if (mapTrans.active) {
+    const FADE = 0.28;
+    const alpha = mapTrans.phase === 'out'
+      ? Math.min(1, mapTrans.timer / FADE)
+      : Math.max(0, 1 - mapTrans.timer / FADE);
+    ctx.fillStyle = `rgba(0,0,0,${alpha.toFixed(3)})`;
+    ctx.fillRect(0, 0, VW, VH);
+  }
+
+  if (gameStarted) requestAnimationFrame(gameLoop);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════════════════════
+gameMap = buildMap();
+</script>
+</body>
+</html>
