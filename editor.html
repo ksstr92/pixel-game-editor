@@ -232,6 +232,22 @@ select.type-sel {
 .map-item-name:focus { cursor: text; border-bottom: 1px solid #3a6090; }
 .mibtn { padding: 2px 5px; font-size: 10px; flex-shrink: 0; }
 
+/* Minimap */
+#minimap-canvas {
+  position: absolute;
+  bottom: 16px; right: 16px;
+  border: 1px solid #3a3a3a;
+  background: #080808;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  cursor: crosshair;
+  z-index: 5;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.7);
+  opacity: 0.92;
+  transition: opacity 0.15s;
+}
+#minimap-canvas:hover { opacity: 1; border-color: #5a5a5a; }
+
 /* scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #111; }
@@ -257,6 +273,7 @@ select.type-sel {
   <button class="tbtn" id="btn-fill"  title="Flood Fill [F]">⬛ Fill</button>
   <button class="tbtn" id="btn-pick"  title="Pick Tile [P]">🎯 Pick</button>
   <button class="tbtn" id="btn-exit"  title="Place/remove exit [X]">🚪 Exit</button>
+  <button class="tbtn" id="btn-spawn" title="Set player spawn [S]">⚑ Spawn</button>
   <div class="sep"></div>
   <span style="color:#555;">Zoom:</span>
   <button class="tbtn" id="btn-z1">1×</button>
@@ -314,7 +331,7 @@ select.type-sel {
 
       <div id="help-content" style="display:none;padding:4px;color:#777;line-height:1.9;font-size:11px;">
         <p style="color:#9ce;margin-bottom:4px;font-size:12px;">Tools</p>
-        <p><b style="color:#bbb">B</b> Paint &nbsp;|&nbsp; <b style="color:#bbb">E</b> Erase &nbsp;|&nbsp; <b style="color:#bbb">F</b> Fill &nbsp;|&nbsp; <b style="color:#bbb">P</b> Pick &nbsp;|&nbsp; <b style="color:#bbb">X</b> Exit</p>
+        <p><b style="color:#bbb">B</b> Paint &nbsp;|&nbsp; <b style="color:#bbb">E</b> Erase &nbsp;|&nbsp; <b style="color:#bbb">F</b> Fill &nbsp;|&nbsp; <b style="color:#bbb">P</b> Pick &nbsp;|&nbsp; <b style="color:#bbb">X</b> Exit &nbsp;|&nbsp; <b style="color:#bbb">S</b> Spawn</p>
         <p><b style="color:#bbb">G</b> Grid &nbsp;|&nbsp; <b style="color:#bbb">+/−</b> Zoom</p>
         <p><b style="color:#bbb">Ctrl+Z</b> Undo &nbsp;|&nbsp; <b style="color:#bbb">Ctrl+Y</b> Redo</p>
         <p><b style="color:#bbb">Arrow keys</b> Scroll map</p>
@@ -331,6 +348,8 @@ select.type-sel {
         <p><b style="color:#bbb">Export JS</b> copies VISUAL_MAP + GAME_MAP to clipboard — paste into game.html buildMap().</p>
         <p><b style="color:#bbb">Save World</b> downloads world.json (all maps + exits + tints).</p>
         <p><b style="color:#bbb">X</b> Exit tool — click any cell to link it to another map. Exits appear as green E markers.</p>
+        <p><b style="color:#bbb">S</b> Spawn tool — click any cell to set the player start position (gold P marker). Saved per map.</p>
+        <p><b style="color:#bbb">Minimap</b> (bottom-right) — click or drag to pan the camera. Gold dot = spawn, green dots = exits, white box = current view.</p>
         <p>Auto-saves to browser storage every 30s.</p>
       </div>
     </div>
@@ -381,6 +400,7 @@ select.type-sel {
 
   <div id="map-wrap">
     <canvas id="map-canvas"></canvas>
+    <canvas id="minimap-canvas" title="Click or drag to pan camera"></canvas>
   </div>
 </div>
 
@@ -715,7 +735,7 @@ function createNewMap(name) {
   const id = genMapId();
   const newTM = [];
   for (let r = 0; r < MAP_ROWS; r++) newTM.push(new Array(MAP_COLS).fill(-1));
-  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, exits: [] });
+  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, exits: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } });
   return id;
 }
 
@@ -731,6 +751,7 @@ function switchToMap(id) {
   if (!m) return;
   tileMap = m.tileMap.map(r => [...r]);
   undoStack = []; redoStack = [];
+  markMinimapDirty();
   clampCam();
   redrawAll();
   renderMapsList();
@@ -801,6 +822,22 @@ function renderMapsList() {
     item.addEventListener('click', () => { if (m.id !== currentMapId) switchToMap(m.id); });
     item.append(badge, nameEl, dupBtn, delBtn);
     list.appendChild(item);
+
+    // ── Spawn sub-item under active map ──────────────────
+    if (m.id === currentMapId) {
+      const sp = m.spawn;
+      const spEl = document.createElement('div');
+      spEl.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 6px 3px 18px;font-size:10px;border-left:2px solid #4a4a12;margin-bottom:2px;';
+      const spLbl = document.createElement('span');
+      spLbl.style.cssText = 'flex:1;color:#cca030;cursor:default;';
+      spLbl.textContent = sp ? `⚑ Spawn: row ${sp.row}, col ${sp.col}` : '⚑ Spawn: (not set)';
+      spLbl.title = 'Use the Spawn tool (S) to move this';
+      const spBtn = document.createElement('button');
+      spBtn.className = 'tbtn mibtn'; spBtn.textContent = '✏'; spBtn.title = 'Activate spawn tool';
+      spBtn.onclick = () => { setTool('spawn'); switchTab('palette'); toast('Click any cell to set the player spawn'); };
+      spEl.append(spLbl, spBtn);
+      list.appendChild(spEl);
+    }
 
     // ── Exits list under the active map ──────────────────
     if (m.id === currentMapId && m.exits?.length) {
@@ -974,6 +1011,144 @@ function renderExitOverlays() {
   });
 }
 
+// ── Spawn overlay ─────────────────────────────────────────
+
+function renderSpawnOverlay() {
+  const cur = worldMaps.find(m => m.id === currentMapId);
+  if (!cur?.spawn) return;
+  const { row, col } = cur.spawn;
+  const ts = tileSize();
+  const dx = Math.round(col * ts - camX);
+  const dy = Math.round(row * ts - camY);
+  if (dx + ts < 0 || dx > mapCanvas.width || dy + ts < 0 || dy > mapCanvas.height) return;
+
+  // Gold cell highlight
+  mapCtx.fillStyle = 'rgba(255, 213, 50, 0.28)';
+  mapCtx.fillRect(dx, dy, ts, ts);
+  mapCtx.strokeStyle = '#ffd060';
+  mapCtx.lineWidth = Math.max(1.5, ts * 0.05);
+  mapCtx.strokeRect(dx + 1, dy + 1, ts - 2, ts - 2);
+
+  // Draw "P" label or the helmet tile if loaded
+  if (ts >= 10) {
+    mapCtx.save();
+    mapCtx.imageSmoothingEnabled = false;
+    if (monoSheet && monoSheet.complete && monoSheet.naturalWidth > 0) {
+      // Multiply-blend the helmet tile (id 119) in gold over the highlight
+      mapCtx.globalCompositeOperation = 'source-over';
+      mapCtx.globalAlpha = 0.75;
+      mapCtx.fillStyle = '#ffd060';
+      mapCtx.fillRect(dx + ts*0.1, dy + ts*0.1, ts*0.8, ts*0.8);
+      mapCtx.globalCompositeOperation = 'multiply';
+      mapCtx.drawImage(monoSheet, (119%17)*16, Math.floor(119/17)*16, 16, 16,
+        dx + ts*0.1, dy + ts*0.1, ts*0.8, ts*0.8);
+    } else {
+      const fs = Math.min(ts * 0.42, 14);
+      mapCtx.fillStyle = '#ffd060';
+      mapCtx.font = `bold ${fs}px monospace`;
+      mapCtx.textAlign = 'center'; mapCtx.textBaseline = 'middle';
+      mapCtx.fillText('P', dx + ts/2, dy + ts/2);
+    }
+    mapCtx.restore();
+  }
+}
+
+// ── Minimap ────────────────────────────────────────────────
+// Per-type base colors for minimap pixel rendering (blended with tile tint)
+const MM_CELL = 2;   // pixels per map cell → 128×128 for 64×64 map
+const MM_TYPE_RGB = [
+  [26, 26, 30],   // 0 WALL
+  [42, 61, 26],   // 1 GRASS
+  [26, 37, 64],   // 2 WATER
+  [30, 30, 34],   // 3 SWALL
+  [26, 48, 16],   // 4 TREE
+  [61, 58, 46],   // 5 PATH
+  [52, 46, 38],   // 6 FLOOR
+  [20, 20, 24],   // 7 DWALL
+];
+
+// Off-screen canvas holds the cached tile-pixel image (only rebuilt when tiles change)
+const mmTile = document.createElement('canvas');
+mmTile.width  = MAP_COLS * MM_CELL;
+mmTile.height = MAP_ROWS * MM_CELL;
+let mmDirty = true;
+
+function markMinimapDirty() { mmDirty = true; }
+
+function renderMinimap() {
+  const mmCanvas = document.getElementById('minimap-canvas');
+  if (!mmCanvas) return;
+  const mmCtx = mmCanvas.getContext('2d');
+  const W = MAP_COLS * MM_CELL, H = MAP_ROWS * MM_CELL;
+  if (mmCanvas.width !== W || mmCanvas.height !== H) {
+    mmCanvas.width = W; mmCanvas.height = H;
+  }
+
+  // ── Rebuild tile pixel image when tiles changed ──────────
+  if (mmDirty) {
+    const tc  = mmTile.getContext('2d');
+    const img = tc.createImageData(W, H);
+    const d   = img.data;
+
+    for (let r = 0; r < MAP_ROWS; r++) {
+      for (let c = 0; c < MAP_COLS; c++) {
+        const tid = tileMap[r][c];
+        let cr, cg, cb;
+        if (tid < 0) {
+          cr = 8; cg = 7; cb = 6;
+        } else {
+          const et   = typeTable[tid] ?? 0;
+          const base = MM_TYPE_RGB[et] ?? [30,30,30];
+          const tint = hexToRgb(tintTable[tid] || DEFAULT_TINT);
+          cr = Math.round(base[0]*0.65 + tint[0]*0.35);
+          cg = Math.round(base[1]*0.65 + tint[1]*0.35);
+          cb = Math.round(base[2]*0.65 + tint[2]*0.35);
+        }
+        for (let pr = 0; pr < MM_CELL; pr++) {
+          for (let pc = 0; pc < MM_CELL; pc++) {
+            const i = ((r*MM_CELL+pr)*W + c*MM_CELL+pc) * 4;
+            d[i]=cr; d[i+1]=cg; d[i+2]=cb; d[i+3]=255;
+          }
+        }
+      }
+    }
+    tc.putImageData(img, 0, 0);
+    mmDirty = false;
+  }
+
+  // Blit cached tile layer
+  mmCtx.drawImage(mmTile, 0, 0);
+
+  // ── Overlays ──────────────────────────────────────────────
+  const cur = worldMaps.find(m => m.id === currentMapId);
+
+  // Exit dots (green)
+  if (cur?.exits?.length) {
+    mmCtx.fillStyle = '#3cd264';
+    cur.exits.forEach(e =>
+      mmCtx.fillRect(e.fromCol*MM_CELL, e.fromRow*MM_CELL, MM_CELL+1, MM_CELL+1));
+  }
+
+  // Spawn dot (gold, slightly larger)
+  if (cur?.spawn) {
+    mmCtx.fillStyle = '#ffd060';
+    mmCtx.fillRect(cur.spawn.col*MM_CELL - 1, cur.spawn.row*MM_CELL - 1, MM_CELL+2, MM_CELL+2);
+  }
+
+  // Viewport rectangle (white outline)
+  const ts = tileSize();
+  const vx = camX/ts, vy = camY/ts;
+  const vw = mapCanvas.width/ts, vh = mapCanvas.height/ts;
+  mmCtx.strokeStyle = 'rgba(255,255,255,0.72)';
+  mmCtx.lineWidth = 1;
+  mmCtx.strokeRect(
+    Math.max(0, Math.round(vx*MM_CELL)) + 0.5,
+    Math.max(0, Math.round(vy*MM_CELL)) + 0.5,
+    Math.min(W - Math.round(vx*MM_CELL), Math.round(vw*MM_CELL)),
+    Math.min(H - Math.round(vy*MM_CELL), Math.round(vh*MM_CELL))
+  );
+}
+
 // ── Core draw: single tile on any canvas context ──────────
 function drawTile(ctx, id, dx, dy, size) {
   if (id < 0) {
@@ -1145,7 +1320,8 @@ function renderMap() {
     }
   }
 
-  // Exit overlays (green portal markers)
+  // Overlays: spawn (gold), exits (green)
+  renderSpawnOverlay();
   renderExitOverlays();
 
   // Hover highlight
@@ -1155,11 +1331,15 @@ function renderMap() {
     const hy = Math.round(hoverCell.r * ts - camY);
     const hoverColor = tool === 'erase'  ? 'rgba(255,80,80,0.75)'
                      : tool === 'exit'   ? 'rgba(50,220,100,0.85)'
+                     : tool === 'spawn'  ? 'rgba(255,215,60,0.9)'
                      : 'rgba(255,255,255,0.55)';
     mapCtx.strokeStyle = hoverColor;
     mapCtx.lineWidth = 1.5;
     mapCtx.strokeRect(hx+0.5, hy+0.5, ts-1, ts-1);
   }
+
+  // Minimap
+  renderMinimap();
 }
 
 let hoverCell = { r:-1, c:-1 };
@@ -1197,6 +1377,7 @@ function paint(r, c) {
   if (old === nw) return;
   pushUndo([{ r, c, old, nw }]);
   tileMap[r][c] = nw;
+  markMinimapDirty();
   renderMap();
 }
 
@@ -1227,7 +1408,7 @@ function floodFill(r, c) {
       }
     }
   }
-  if (ops.length) { pushUndo(ops); renderMap(); }
+  if (ops.length) { pushUndo(ops); markMinimapDirty(); renderMap(); }
 }
 
 // ── Undo / redo ────────────────────────────────────────────
@@ -1241,14 +1422,14 @@ function undo() {
   const ops = undoStack.pop();
   for (const o of ops) tileMap[o.r][o.c] = o.old;
   redoStack.push(ops);
-  renderMap();
+  markMinimapDirty(); renderMap();
 }
 function redo() {
   if (!redoStack.length) return;
   const ops = redoStack.pop();
   for (const o of ops) tileMap[o.r][o.c] = o.nw;
   undoStack.push(ops);
-  renderMap();
+  markMinimapDirty(); renderMap();
 }
 
 // ── Init map ───────────────────────────────────────────────
@@ -1261,13 +1442,10 @@ function initMap(fill = -1) {
 // ── Tool / zoom ────────────────────────────────────────────
 function setTool(t) {
   tool = t;
-  ['paint','erase','fill','pick','exit'].forEach(n =>
+  ['paint','erase','fill','pick','exit','spawn'].forEach(n =>
     document.getElementById('btn-'+n).classList.toggle('active', n === t)
   );
-  mapCanvas.style.cursor =
-    t === 'fill' ? 'cell' :
-    t === 'pick' ? 'zoom-in' :
-    t === 'exit' ? 'crosshair' : 'crosshair';
+  mapCanvas.style.cursor = t === 'fill' ? 'cell' : t === 'pick' ? 'zoom-in' : 'crosshair';
 }
 
 function setZoom(z, pivotX, pivotY) {
@@ -1403,7 +1581,7 @@ function loadLegacyMap(data) {
     for (let c = 0; c < MAP_COLS; c++) row.push(data.tileMap[r]?.[c] ?? -1);
     tm.push(row);
   }
-  worldMaps = [{ id, name: 'Imported Map', cols: MAP_COLS, rows: MAP_ROWS, tileMap: tm, exits: [] }];
+  worldMaps = [{ id, name: 'Imported Map', cols: MAP_COLS, rows: MAP_ROWS, tileMap: tm, exits: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } }];
   if (data.tintTable?.length  === TOTAL_TILES) tintTable   = [...data.tintTable];
   if (data.typeTable?.length  === TOTAL_TILES) typeTable   = [...data.typeTable];
   if (data.customNames?.length=== TOTAL_TILES) customNames = [...data.customNames];
@@ -1533,6 +1711,7 @@ palCanvas.addEventListener('mousemove', e => {
 document.getElementById('tint-picker').addEventListener('input', e => {
   tintTable[selTile]=e.target.value;
   document.getElementById('tint-hex').textContent=e.target.value;
+  markMinimapDirty();
   renderPalette(); renderPreview(); renderMap();
 });
 document.getElementById('type-sel').addEventListener('change', e => {
@@ -1576,6 +1755,11 @@ mapCanvas.addEventListener('mousedown', e => {
       if(mt>=0){ selTile=mt; renderPalette(); renderPreview(); setTool('paint'); }
     } else if(tool==='exit') {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openExitModal(r,c);
+    } else if(tool==='spawn') {
+      if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
+        const cur = worldMaps.find(m=>m.id===currentMapId);
+        if(cur) { cur.spawn={row:r,col:c}; renderMap(); renderMapsList(); toast(`Spawn set → row ${r}, col ${c}`); }
+      }
     } else { isPainting=true; lastCell={r:-1,c:-1}; paint(r,c); }
   }
 });
@@ -1600,7 +1784,10 @@ mapCanvas.addEventListener('mousemove', e => {
     statusEl.textContent=`Row ${r}  Col ${c}  (out of bounds)`;
   }
 
-  if(isPainting) {
+  if(tool==='spawn' && (e.buttons&1) && r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
+    const cur=worldMaps.find(m=>m.id===currentMapId);
+    if(cur&&(cur.spawn?.row!==r||cur.spawn?.col!==c)){cur.spawn={row:r,col:c};renderMap();renderMapsList();}
+  } else if(isPainting) {
     if(e.buttons&2) { const s=tool; tool='erase'; paint(r,c); tool=s; }
     else paint(r,c);
   } else renderMap();
@@ -1619,6 +1806,25 @@ mapCanvas.addEventListener('mouseleave', () => {
 });
 mapCanvas.addEventListener('contextmenu', e=>e.preventDefault());
 
+// ── Minimap pan ────────────────────────────────────────────
+let mmPanning = false;
+function panFromMinimap(e) {
+  const mmC = document.getElementById('minimap-canvas');
+  if (!mmC) return;
+  const rect = mmC.getBoundingClientRect();
+  const mx   = (e.clientX - rect.left)  / (rect.width  / (MAP_COLS * MM_CELL));
+  const my   = (e.clientY - rect.top)   / (rect.height / (MAP_ROWS * MM_CELL));
+  const tc   = mx / MM_CELL, tr = my / MM_CELL;
+  const ts   = tileSize();
+  camX = tc * ts - mapCanvas.width  / 2;
+  camY = tr * ts - mapCanvas.height / 2;
+  clampCam(); renderMap();
+}
+const mmCanvas = document.getElementById('minimap-canvas');
+mmCanvas.addEventListener('mousedown', e => { e.stopPropagation(); mmPanning=true; panFromMinimap(e); });
+document.addEventListener('mousemove', e => { if(mmPanning) panFromMinimap(e); });
+document.addEventListener('mouseup',   () => { mmPanning=false; });
+
 mapCanvas.addEventListener('wheel', e => {
   e.preventDefault();
   const rect=mapCanvas.getBoundingClientRect();
@@ -1632,6 +1838,7 @@ document.getElementById('btn-erase').onclick=()=>setTool('erase');
 document.getElementById('btn-fill' ).onclick=()=>setTool('fill');
 document.getElementById('btn-pick' ).onclick=()=>setTool('pick');
 document.getElementById('btn-exit' ).onclick=()=>setTool('exit');
+document.getElementById('btn-spawn').onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
 document.getElementById('btn-z1'   ).onclick=()=>setZoom(1);
 document.getElementById('btn-z2'   ).onclick=()=>setZoom(2);
 document.getElementById('btn-z3'   ).onclick=()=>setZoom(3);
@@ -1714,6 +1921,7 @@ document.addEventListener('keydown', e => {
     case 'f': setTool('fill');  break;
     case 'p': setTool('pick');  break;
     case 'x': setTool('exit');  break;
+    case 's': setTool('spawn'); break;
     case 'g':
       showGrid=!showGrid;
       document.getElementById('btn-grid').classList.toggle('active',showGrid);

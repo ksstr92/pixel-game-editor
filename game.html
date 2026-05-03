@@ -1182,9 +1182,11 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
   visualMap = m.tileMap.map(r => [...r]);
   worldTileCache.clear(); // flush per-tile canvas cache on map change
 
-  // Move player to entry point
-  player.x = (spawnCol + 0.5) * TS;
-  player.y = (spawnRow + 0.5) * TS;
+  // Move player: prefer explicit entry coords, then map's saved spawn, then center
+  const useRow = spawnRow !== undefined ? spawnRow : (m.spawn?.row ?? Math.floor(MAP_ROWS/2));
+  const useCol = spawnCol !== undefined ? spawnCol : (m.spawn?.col ?? Math.floor(MAP_COLS/2));
+  player.x = (useCol + 0.5) * TS;
+  player.y = (useRow + 0.5) * TS;
   player.vx = 0; player.vy = 0;
 
   // Clear entities (no enemies in world maps by default)
@@ -1230,8 +1232,8 @@ function loadWorldFile() {
         worldTileCache.clear();
         const startId = data.currentMapId || data.maps[0].id;
         const startMap = data.maps.find(m => m.id === startId) || data.maps[0];
-        // Use first map's center as a safe spawn if no explicit spawn
-        activateWorldMap(startMap.id, Math.floor(startMap.rows/2), Math.floor(startMap.cols/2));
+        // Use the map's saved spawn point (activateWorldMap falls back to center)
+        activateWorldMap(startMap.id);
         console.log('World loaded:', data.maps.length, 'maps');
       } catch(err) { alert('World load error: ' + err.message); }
     };
