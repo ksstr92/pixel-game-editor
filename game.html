@@ -615,26 +615,45 @@ function drawShadow(x,y,r) {
   ctx.restore();
 }
 
-// ── Player character — Monochrome tile 119 (HELMET) with gold tint ───────────
+// ── Player character — Monochrome tile 119 (HELMET) ──────────────────────────
+// Off-screen buffer used to composite the sprite over the already-drawn map.
+// Multiply-blending against the sampled background means white sprite pixels
+// become transparent (map shows through) and dark pixels darken the tile below —
+// no coloured rectangle is ever visible behind the player.
+const _sprBuf = document.createElement('canvas');
+_sprBuf.width = _sprBuf.height = TS;
+const _sprCtx = _sprBuf.getContext('2d');
+
 function drawKnight(x,y,atkAngle,atkTimer,dashActive,facingRight,animState='idle') {
-  const dx = x - cam.x - TS/2;
-  const dy = y - cam.y - TS/2;
-  // Bob animation when moving
+  const dx  = Math.round(x - cam.x - TS/2);
   const mv  = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD'];
-  const bob = mv ? Math.sin(Date.now()*0.009) * (TS * 0.05) : 0;
-  // Tint flashes lighter on hurt
-  const tint = '#ffd060';
+  const bob = Math.round(mv ? Math.sin(Date.now()*0.009) * (TS * 0.05) : 0);
+  const dy  = Math.round(y - cam.y - TS/2) + bob;
+
+  if (!monoReady) {
+    // Fallback before sheet loads
+    ctx.fillStyle = '#667788';
+    ctx.fillRect(dx, dy, TS, TS);
+    return;
+  }
+
+  // 1. Sample whatever map tiles are already drawn beneath the sprite
+  _sprCtx.clearRect(0, 0, TS, TS);
+  _sprCtx.drawImage(ctx.canvas, dx, dy, TS, TS, 0, 0, TS, TS);
+
+  // 2. Multiply the tile onto the sampled background:
+  //    - white pixels (sprite bg) × map colour = map colour  → invisible bg
+  //    - dark pixels (sprite art) × map colour ≈ black       → visible sprite
+  _sprCtx.globalCompositeOperation = 'multiply';
+  _sprCtx.imageSmoothingEnabled = false;
+  _sprCtx.drawImage(monoSheet,
+    (119 % 17) * 16, Math.floor(119 / 17) * 16, 16, 16,
+    0, 0, TS, TS);
+
+  // 3. Blit the composited result back to the main canvas
   ctx.save();
   ctx.imageSmoothingEnabled = false;
-  ctx.fillStyle = tint;
-  ctx.fillRect(dx, dy + bob, TS, TS);
-  if (monoReady) {
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.drawImage(monoSheet,
-      (119 % 17) * 16, Math.floor(119 / 17) * 16, 16, 16,
-      dx, dy + bob, TS, TS);
-    ctx.globalCompositeOperation = 'source-over';
-  }
+  ctx.drawImage(_sprBuf, dx, dy);
   ctx.restore();
 }
 
