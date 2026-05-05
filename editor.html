@@ -91,8 +91,8 @@ body { display: flex; flex-direction: column; }
 }
 #palette-canvas {
   display: block;
-  image-rendering: pixelated;
   image-rendering: crisp-edges;
+  image-rendering: pixelated;
   cursor: pointer;
 }
 
@@ -106,8 +106,8 @@ body { display: flex; flex-direction: column; }
 #info-top { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 8px; }
 #tile-preview-canvas {
   width: 64px; height: 64px;
-  image-rendering: pixelated;
   image-rendering: crisp-edges;
+  image-rendering: pixelated;
   border: 1px solid #333;
   flex-shrink: 0;
 }
@@ -149,8 +149,8 @@ select.type-sel {
 #map-canvas {
   position: absolute;
   top: 0; left: 0;
-  image-rendering: pixelated;
   image-rendering: crisp-edges;
+  image-rendering: pixelated;
   cursor: crosshair;
 }
 
@@ -238,8 +238,8 @@ select.type-sel {
   bottom: 16px; right: 16px;
   border: 1px solid #3a3a3a;
   background: #080808;
-  image-rendering: pixelated;
   image-rendering: crisp-edges;
+  image-rendering: pixelated;
   cursor: crosshair;
   z-index: 5;
   box-shadow: 0 2px 10px rgba(0,0,0,0.7);
@@ -591,6 +591,11 @@ const mapWrap    = document.getElementById('map-wrap');
 const statusEl   = document.getElementById('status');
 const editorCanvas = document.getElementById('editor-canvas');
 const editorCtx = editorCanvas.getContext('2d');
+
+// Disable smoothing globally on every context.
+// Canvas resize (width= / height= assignment) resets context state including
+// imageSmoothingEnabled back to true, so we also re-apply it after each resize.
+[palCtx, prevCtx, mapCtx, editorCtx].forEach(c => { c.imageSmoothingEnabled = false; });
 
 // ── Tile Editor Functions ──────────────────────────────────
 // ── Tile Editor: two-canvas architecture ──────────────────────────────────────
@@ -1512,6 +1517,7 @@ function renderMinimap() {
   const W = MAP_COLS * MM_CELL, H = MAP_ROWS * MM_CELL;
   if (mmCanvas.width !== W || mmCanvas.height !== H) {
     mmCanvas.width = W; mmCanvas.height = H;
+    mmCtx.imageSmoothingEnabled = false;
   }
 
   // ── Rebuild tile pixel image when tiles changed ──────────
@@ -1651,6 +1657,7 @@ function renderPalette() {
 
   palCanvas.width  = PAL_W;
   palCanvas.height = PAL_H;
+  palCtx.imageSmoothingEnabled = false;
   palCtx.fillStyle = '#0e0e0e';
   palCtx.fillRect(0, 0, PAL_W, PAL_H);
 
@@ -1715,6 +1722,7 @@ function resizeMapCanvas() {
   const r = mapWrap.getBoundingClientRect();
   mapCanvas.width  = r.width;
   mapCanvas.height = r.height;
+  mapCtx.imageSmoothingEnabled = false; // canvas resize resets context state
   clampCam();
   renderMap();
 }
