@@ -18,8 +18,6 @@ body {
 #canvas {
   display: block;
   cursor: crosshair;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
 }
 #overlay {
   position: absolute;
@@ -509,7 +507,7 @@ function drawTile(r,c) {
     const tint = worldData.tintTable?.[mt] || '#4b6271';
     ctx.fillStyle = tint;
     ctx.fillRect(dx, dy, TS, TS);
-    ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.imageSmoothingEnabled = false;
+    ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.imageSmoothingEnabled = true;
     const ct    = worldData.customTiles?.[mt];
     const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : mt;
     if (baseId >= 0 && monoReady)
@@ -645,14 +643,14 @@ function drawKnight(x,y,atkAngle,atkTimer,dashActive,facingRight,animState='idle
   //    - white pixels (sprite bg) × map colour = map colour  → invisible bg
   //    - dark pixels (sprite art) × map colour ≈ black       → visible sprite
   _sprCtx.globalCompositeOperation = 'multiply';
-  _sprCtx.imageSmoothingEnabled = false;
+  _sprCtx.imageSmoothingEnabled = true;
   _sprCtx.drawImage(monoSheet,
     (119 % 17) * 16, Math.floor(119 / 17) * 16, 16, 16,
     0, 0, TS, TS);
 
   // 3. Blit the composited result back to the main canvas
   ctx.save();
-  ctx.imageSmoothingEnabled = false;
+  ctx.imageSmoothingEnabled = true;
   ctx.drawImage(_sprBuf, dx, dy);
   ctx.restore();
 }
