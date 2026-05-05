@@ -274,7 +274,8 @@ select.type-sel {
   <button class="tbtn" id="btn-pick"  title="Pick Tile [P]">🎯 Pick</button>
   <button class="tbtn" id="btn-exit"  title="Place/remove exit [X]">🚪 Exit</button>
   <button class="tbtn" id="btn-spawn" title="Set player spawn [S]">⚑ Spawn</button>
-  <button class="tbtn" id="btn-npc"   title="Place NPC [N]">👤 NPC</button>
+  <button class="tbtn" id="btn-npc"     title="Place NPC [N]">👤 NPC</button>
+  <button class="tbtn" id="btn-trigger" title="Place Trigger [T]">⚡ Trigger</button>
   <div class="sep"></div>
   <span style="color:#555;">Zoom:</span>
   <button class="tbtn" id="btn-z1">1×</button>
@@ -736,7 +737,7 @@ function createNewMap(name) {
   const id = genMapId();
   const newTM = [];
   for (let r = 0; r < MAP_ROWS; r++) newTM.push(new Array(MAP_COLS).fill(-1));
-  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, exits: [], npcs: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } });
+  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, exits: [], npcs: [], triggers: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } });
   return id;
 }
 
@@ -776,9 +777,10 @@ function duplicateMap(id) {
   if (!src) return;
   const newId  = genMapId();
   const newMap = { id: newId, name: src.name + ' copy', cols: src.cols, rows: src.rows,
-                   tileMap: src.tileMap.map(r => [...r]),
-                   exits: (src.exits||[]).map(e=>({...e, id:'exit_'+genMapId()})),
-                   npcs:  (src.npcs||[]).map(n=>({...n, id:'npc_'+genMapId()})),
+                   tileMap:   src.tileMap.map(r => [...r]),
+                   exits:     (src.exits||[]).map(e=>({...e, id:'exit_'+genMapId()})),
+                   npcs:      (src.npcs||[]).map(n=>({...n, id:'npc_'+genMapId()})),
+                   triggers:  (src.triggers||[]).map(t=>({...t, id:'trig_'+genMapId()})),
                    spawn: src.spawn ? {...src.spawn} : undefined };
   const idx = worldMaps.findIndex(m => m.id === id);
   worldMaps.splice(idx + 1, 0, newMap);
@@ -897,6 +899,35 @@ function renderMapsList() {
 
         exitEl.append(lbl, editBtn2, delBtn2);
         list.appendChild(exitEl);
+      });
+    }
+
+    // ── Triggers list under the active map ───────────────
+    if (m.id === currentMapId && m.triggers?.length) {
+      m.triggers.forEach(trig => {
+        const trigEl = document.createElement('div');
+        trigEl.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 6px 3px 18px;font-size:10px;border-left:2px solid #7a4a00;margin-bottom:2px;';
+
+        const icon = trig.type === 'chest' ? '◆' : trig.type === 'zone' ? '~' : '!';
+        const act  = trig.activation === 'walk' ? '🚶' : '[E]';
+        const lbl3 = document.createElement('span');
+        lbl3.style.cssText = 'flex:1;color:#ff9a00;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;';
+        lbl3.textContent = `${icon} ${trig.title || '(untitled)'} ${act} (${trig.row},${trig.col})`;
+        lbl3.title = `${trig.type} trigger at (${trig.row},${trig.col}) — ${trig.lines?.length ?? 0} line(s)${trig.oneShot ? ' • one-shot' : ''}`;
+
+        const editBtnT = document.createElement('button');
+        editBtnT.className = 'tbtn mibtn'; editBtnT.textContent = '✏'; editBtnT.title = 'Edit Trigger';
+        editBtnT.onclick = () => { setTool('trigger'); openTriggerModal(trig.row, trig.col); };
+
+        const delBtnT = document.createElement('button');
+        delBtnT.className = 'tbtn mibtn danger'; delBtnT.textContent = '✕'; delBtnT.title = 'Delete Trigger';
+        delBtnT.onclick = () => {
+          const idx = m.triggers.indexOf(trig);
+          if (idx >= 0) { m.triggers.splice(idx, 1); renderMapsList(); renderMap(); }
+        };
+
+        trigEl.append(lbl3, editBtnT, delBtnT);
+        list.appendChild(trigEl);
       });
     }
   });
@@ -1272,6 +1303,186 @@ function renderNpcOverlays() {
   });
 }
 
+// ── Trigger overlays ──────────────────────────────────────
+
+const TRIG_STYLE = {
+  message:  { bg: 'rgba(255,160, 30,0.22)', border: '#ff9a00', icon: '!',  label: '#ffb040' },
+  chest:    { bg: 'rgba(255,210, 50,0.22)', border: '#ffd030', icon: '◆',  label: '#ffe060' },
+  zone:     { bg: 'rgba(130, 80,220,0.22)', border: '#9060dd', icon: '~',  label: '#b090ff' },
+};
+
+function renderTriggerOverlays() {
+  const cur = worldMaps.find(m => m.id === currentMapId);
+  if (!cur?.triggers?.length) return;
+  const ts = tileSize();
+
+  cur.triggers.forEach(trig => {
+    const dx = Math.round(trig.col * ts - camX);
+    const dy = Math.round(trig.row * ts - camY);
+    if (dx + ts < 0 || dx > mapCanvas.width || dy + ts < 0 || dy > mapCanvas.height) return;
+
+    const st = TRIG_STYLE[trig.type] || TRIG_STYLE.message;
+
+    // Cell highlight
+    mapCtx.fillStyle = st.bg;
+    mapCtx.fillRect(dx, dy, ts, ts);
+    mapCtx.strokeStyle = st.border;
+    mapCtx.lineWidth = Math.max(1, ts * 0.05);
+    mapCtx.strokeRect(dx + 1, dy + 1, ts - 2, ts - 2);
+
+    // Icon + interact badge
+    if (ts >= 10) {
+      mapCtx.save();
+      const fs = Math.min(ts * 0.4, 14);
+      mapCtx.font = `bold ${fs}px monospace`;
+      mapCtx.textAlign = 'center'; mapCtx.textBaseline = 'middle';
+      mapCtx.fillStyle = st.label;
+      mapCtx.fillText(st.icon, dx + ts / 2, dy + ts / 2);
+
+      // Small 'E' badge in bottom-right if interact-activation
+      if (trig.activation === 'interact') {
+        const bfs = Math.min(ts * 0.22, 9);
+        mapCtx.font = `bold ${bfs}px monospace`;
+        mapCtx.fillStyle = '#ffffff';
+        mapCtx.fillText('E', dx + ts - bfs, dy + ts - bfs * 0.5);
+      }
+      mapCtx.restore();
+    }
+
+    // Title label above cell
+    if (ts >= 20 && trig.title) {
+      const lfs = Math.min(ts * 0.22, 11);
+      mapCtx.save();
+      mapCtx.font = `${lfs}px monospace`;
+      mapCtx.textAlign = 'center';
+      const tw = mapCtx.measureText(trig.title).width;
+      mapCtx.fillStyle = 'rgba(0,0,0,0.7)';
+      mapCtx.fillRect(dx + ts/2 - tw/2 - 2, dy - lfs - 4, tw + 4, lfs + 4);
+      mapCtx.fillStyle = st.label;
+      mapCtx.fillText(trig.title, dx + ts/2, dy - 4);
+      mapCtx.restore();
+    }
+  });
+}
+
+// ── Trigger modal ─────────────────────────────────────────
+
+function openTriggerModal(row, col) {
+  const cur = worldMaps.find(m => m.id === currentMapId);
+  if (!cur) return;
+  if (!cur.triggers) cur.triggers = [];
+
+  const existing = cur.triggers.find(t => +t.row === +row && +t.col === +col);
+
+  const ov  = document.createElement('div'); ov.className = 'overlay';
+  const box = document.createElement('div'); box.className = 'modal';
+  box.style.minWidth = '440px';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = existing ? `Edit Trigger (${row}, ${col})` : `Place Trigger at (${row}, ${col})`;
+  h3.style.color = '#ff9a00';
+
+  // ── Type row ─────────────────────────────────────────────
+  function makeRow(labelTxt) {
+    const row2 = document.createElement('div');
+    row2.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const lbl = document.createElement('label');
+    lbl.textContent = labelTxt; lbl.style.color = '#888'; lbl.style.minWidth = '80px';
+    row2.appendChild(lbl);
+    return { row: row2, lbl };
+  }
+
+  const { row: typeRow } = makeRow('Type:');
+  const typeSel = document.createElement('select');
+  typeSel.style.cssText = 'background:#111;color:#fc8;border:1px solid #3a3a3a;padding:3px 6px;font-family:inherit;font-size:11px;flex:1;';
+  [['message','💬 Message (sign / lore)'],['chest','◆ Chest (collectible)'],['zone','~ Zone Entry (invisible)']]
+    .forEach(([v,l]) => { const o = document.createElement('option'); o.value=v; o.textContent=l; typeSel.appendChild(o); });
+  typeSel.value = existing?.type ?? 'message';
+  typeRow.appendChild(typeSel);
+
+  // ── Activation row ───────────────────────────────────────
+  const { row: actRow } = makeRow('Activate:');
+  const actSel = document.createElement('select');
+  actSel.style.cssText = typeSel.style.cssText;
+  [['walk','🚶 Walk-over (player steps on cell)'],['interact','[E] Interact (press E nearby)']]
+    .forEach(([v,l]) => { const o = document.createElement('option'); o.value=v; o.textContent=l; actSel.appendChild(o); });
+  actSel.value = existing?.activation ?? 'interact';
+  actRow.appendChild(actSel);
+
+  // ── Title row ────────────────────────────────────────────
+  const { row: titleRow } = makeRow('Title:');
+  const titleInp = document.createElement('input');
+  titleInp.type='text'; titleInp.value = existing?.title ?? '';
+  titleInp.placeholder = 'Ancient Stone, Village Well…';
+  titleInp.style.cssText = 'flex:1;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+  titleRow.appendChild(titleInp);
+
+  // ── One-shot checkbox ─────────────────────────────────────
+  const oneShotRow = document.createElement('div');
+  oneShotRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const osChk = document.createElement('input');
+  osChk.type='checkbox'; osChk.checked = existing?.oneShot ?? true;
+  osChk.style.accentColor='#ff9a00';
+  const osLbl = document.createElement('label');
+  osLbl.textContent = 'One-shot (fires only once per map visit)';
+  osLbl.style.color = '#888'; osLbl.style.fontSize = '11px';
+  oneShotRow.append(osChk, osLbl);
+
+  // ── Dialog lines ─────────────────────────────────────────
+  const dialogLbl = document.createElement('div');
+  dialogLbl.style.cssText = 'color:#888;font-size:10px;margin-top:4px;';
+  dialogLbl.textContent = 'Dialog lines (one line per [E] / continue press):';
+
+  const dialogTA = document.createElement('textarea');
+  dialogTA.style.cssText = 'background:#111;color:#fc8;border:1px solid #2a2a2a;font-family:inherit;font-size:11px;padding:8px;resize:vertical;min-height:100px;width:100%;';
+  dialogTA.value = (existing?.lines ?? ['…']).join('\n');
+  dialogTA.placeholder = 'The stone reads: Beware the dark below.\nMany heroes have not returned.';
+
+  // ── Buttons ──────────────────────────────────────────────
+  const btns = document.createElement('div'); btns.className = 'modal-btns';
+
+  function mkb(label, bg, clr, fn) {
+    const b = document.createElement('button'); b.className = 'tbtn';
+    b.textContent = label; b.style.background = bg; b.style.color = clr;
+    b.onclick = fn; return b;
+  }
+
+  if (existing) {
+    const delBtn = mkb('Delete Trigger', '#3a1515', '#f88', () => {
+      const idx = cur.triggers.indexOf(existing);
+      if (idx >= 0) cur.triggers.splice(idx, 1);
+      ov.remove(); renderMap(); renderMapsList(); toast('Trigger removed');
+    });
+    delBtn.style.marginRight = 'auto';
+    btns.appendChild(delBtn);
+  }
+
+  btns.append(
+    mkb('Cancel', '#2a2a2a', '#aaa', () => ov.remove()),
+    mkb(existing ? 'Save' : 'Add Trigger', '#3a2800', '#ff9a00', () => {
+      const type       = typeSel.value;
+      const activation = actSel.value;
+      const title      = titleInp.value.trim();
+      const oneShot    = osChk.checked;
+      const lines      = dialogTA.value.split('\n').map(s => s.trim()).filter(Boolean);
+      if (!lines.length) lines.push('…');
+      if (existing) {
+        existing.type = type; existing.activation = activation;
+        existing.title = title; existing.oneShot = oneShot; existing.lines = lines;
+      } else {
+        cur.triggers.push({ id: 'trig_' + genMapId(), row, col, type, activation, title, oneShot, lines });
+      }
+      ov.remove(); renderMap(); renderMapsList();
+      toast(existing ? 'Trigger updated' : `Trigger added at (${row}, ${col})`);
+    })
+  );
+
+  box.append(h3, typeRow, actRow, titleRow, oneShotRow, dialogLbl, dialogTA, btns);
+  ov.appendChild(box); document.body.appendChild(ov);
+  ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
+  titleInp.focus();
+}
+
 // ── Minimap ────────────────────────────────────────────────
 // Per-type base colors for minimap pixel rendering (blended with tile tint)
 const MM_CELL = 2;   // pixels per map cell → 128×128 for 64×64 map
@@ -1353,6 +1564,13 @@ function renderMinimap() {
     mmCtx.fillStyle = '#3ab8dc';
     cur.npcs.forEach(n =>
       mmCtx.fillRect(n.col*MM_CELL, n.row*MM_CELL, MM_CELL+1, MM_CELL+1));
+  }
+
+  // Trigger dots (orange)
+  if (cur?.triggers?.length) {
+    mmCtx.fillStyle = '#ff9a00';
+    cur.triggers.forEach(t =>
+      mmCtx.fillRect(t.col*MM_CELL, t.row*MM_CELL, MM_CELL+1, MM_CELL+1));
   }
 
   // Spawn dot (gold, slightly larger)
@@ -1546,10 +1764,11 @@ function renderMap() {
     }
   }
 
-  // Overlays: spawn (gold), exits (green), NPCs (cyan)
+  // Overlays: spawn (gold), exits (green), NPCs (cyan), triggers (orange)
   renderSpawnOverlay();
   renderExitOverlays();
   renderNpcOverlays();
+  renderTriggerOverlays();
 
   // Hover highlight
   if (hoverCell.r >= 0 && hoverCell.c >= 0 &&
@@ -1669,7 +1888,7 @@ function initMap(fill = -1) {
 // ── Tool / zoom ────────────────────────────────────────────
 function setTool(t) {
   tool = t;
-  ['paint','erase','fill','pick','exit','spawn','npc'].forEach(n =>
+  ['paint','erase','fill','pick','exit','spawn','npc','trigger'].forEach(n =>
     document.getElementById('btn-'+n).classList.toggle('active', n === t)
   );
   mapCanvas.style.cursor = t === 'fill' ? 'cell' : t === 'pick' ? 'zoom-in' : 'crosshair';
@@ -1789,7 +2008,7 @@ function loadFile() { document.getElementById('file-input').click(); }
 
 function loadWorldData(data) {
   worldMaps = (data.maps || []).map(m => ({
-    exits: [], npcs: [], ...m,    // ensure exits/npcs arrays exist on legacy maps
+    exits: [], npcs: [], triggers: [], ...m,  // ensure arrays exist on legacy maps
   }));
   if (data.tintTable)    tintTable        = [...data.tintTable];
   if (data.typeTable)    typeTable        = [...data.typeTable];
@@ -1810,7 +2029,7 @@ function loadLegacyMap(data) {
     for (let c = 0; c < MAP_COLS; c++) row.push(data.tileMap[r]?.[c] ?? -1);
     tm.push(row);
   }
-  worldMaps = [{ id, name: 'Imported Map', cols: MAP_COLS, rows: MAP_ROWS, tileMap: tm, exits: [], npcs: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } }];
+  worldMaps = [{ id, name: 'Imported Map', cols: MAP_COLS, rows: MAP_ROWS, tileMap: tm, exits: [], npcs: [], triggers: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } }];
   if (data.tintTable?.length  === TOTAL_TILES) tintTable   = [...data.tintTable];
   if (data.typeTable?.length  === TOTAL_TILES) typeTable   = [...data.typeTable];
   if (data.customNames?.length=== TOTAL_TILES) customNames = [...data.customNames];
@@ -1986,6 +2205,8 @@ mapCanvas.addEventListener('mousedown', e => {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openExitModal(r,c);
     } else if(tool==='npc') {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openNpcModal(r,c);
+    } else if(tool==='trigger') {
+      if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openTriggerModal(r,c);
     } else if(tool==='spawn') {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
         const cur = worldMaps.find(m=>m.id===currentMapId);
@@ -2070,7 +2291,8 @@ document.getElementById('btn-fill' ).onclick=()=>setTool('fill');
 document.getElementById('btn-pick' ).onclick=()=>setTool('pick');
 document.getElementById('btn-exit' ).onclick=()=>setTool('exit');
 document.getElementById('btn-spawn').onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
-document.getElementById('btn-npc'  ).onclick=()=>{ setTool('npc');   toast('Click any cell to place / edit an NPC'); };
+document.getElementById('btn-npc'    ).onclick=()=>{ setTool('npc');     toast('Click any cell to place / edit an NPC'); };
+document.getElementById('btn-trigger').onclick=()=>{ setTool('trigger'); toast('Click any cell to place / edit a trigger'); };
 document.getElementById('btn-z1'   ).onclick=()=>setZoom(1);
 document.getElementById('btn-z2'   ).onclick=()=>setZoom(2);
 document.getElementById('btn-z3'   ).onclick=()=>setZoom(3);
@@ -2153,7 +2375,8 @@ document.addEventListener('keydown', e => {
     case 'f': setTool('fill');  break;
     case 'p': setTool('pick');  break;
     case 'x': setTool('exit');  break;
-    case 'n': setTool('npc');   break;
+    case 'n': setTool('npc');     break;
+    case 't': setTool('trigger'); break;
     case 's': setTool('spawn'); break;
     case 'g':
       showGrid=!showGrid;

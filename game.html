@@ -1136,10 +1136,12 @@ function updatePlayer(dt) {
       activeDialog.index++;
       if (activeDialog.index>=activeDialog.lines.length) activeDialog=null;
     } else {
+      let talked = false;
       for (const npc of npcs)
         if (dist(player.x,player.y,npc.x,npc.y) < 44 * TILE_SCALE) {
-          activeDialog={lines:npc.dialog,index:0,npcName:npc.name}; break;
+          activeDialog={lines:npc.dialog,index:0,npcName:npc.name}; talked=true; break;
         }
+      if (!talked) checkInteractTriggers();
     }
   }
 }
@@ -1205,6 +1207,72 @@ let npcs = SPAWN.friendlies.map(n => ({
 }));
 
 // ════════════════════════════════════════════════════════════════════════════
+// TRIGGERS
+// ════════════════════════════════════════════════════════════════════════════
+let triggers = [];
+let firedTriggers = new Set();
+
+function fireTrigger(trig) {
+  if (trig.oneShot) firedTriggers.add(trig.id);
+  activeDialog = { lines: trig.lines ?? ['…'], index: 0, npcName: trig.title || '' };
+}
+
+function checkWalkTriggers() {
+  if (!triggers.length || activeDialog || mapTrans.active || player.dead) return;
+  const pr = Math.floor(player.y / TS);
+  const pc = Math.floor(player.x / TS);
+  for (const t of triggers) {
+    if (t.activation !== 'walk') continue;
+    if (+t.row !== pr || +t.col !== pc) continue;
+    if (t.oneShot && firedTriggers.has(t.id)) continue;
+    fireTrigger(t); break;
+  }
+}
+
+function checkInteractTriggers() {
+  // Called from E-key handler when no NPC dialog is active
+  const pr = Math.floor(player.y / TS);
+  const pc = Math.floor(player.x / TS);
+  for (const t of triggers) {
+    if (t.activation !== 'interact') continue;
+    if (Math.abs(+t.row - pr) > 1 || Math.abs(+t.col - pc) > 1) continue;
+    if (t.oneShot && firedTriggers.has(t.id)) continue;
+    fireTrigger(t); return true;
+  }
+  return false;
+}
+
+function drawTriggerHints() {
+  // Show [E] prompt above nearby interact triggers (same HUD layer as NPCs)
+  if (activeDialog || player.dead) return;
+  const pr = Math.floor(player.y / TS);
+  const pc = Math.floor(player.x / TS);
+  const hs = hudScale;
+  triggers.forEach(t => {
+    if (t.activation !== 'interact') return;
+    if (t.oneShot && firedTriggers.has(t.id)) return;
+    if (Math.abs(+t.row - pr) > 1 || Math.abs(+t.col - pc) > 1) return;
+    const cx = hX((t.col + 0.5) * TS - cam.x);
+    const cy = hY((t.row + 0.5) * TS - cam.y);
+    // Title label
+    if (t.title) {
+      hudCtx.fillStyle = 'rgba(0,0,0,0.65)';
+      hudCtx.font = `bold ${hF(10)}px Georgia`;
+      const tw = hudCtx.measureText(t.title).width;
+      hudCtx.fillRect(cx - tw/2 - 4, cy - 46*hs, tw + 8, 14*hs);
+      hudCtx.fillStyle = '#ffb040';
+      hudCtx.textAlign = 'center';
+      hudCtx.fillText(t.title, cx, cy - 35*hs);
+    }
+    hudCtx.fillStyle = '#aaffaa';
+    hudCtx.font = `${hF(9)}px Georgia`;
+    hudCtx.textAlign = 'center';
+    hudCtx.fillText('[E] Read', cx, cy - 20*hs);
+    hudCtx.textAlign = 'left';
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // WORLD / MAP TRAVEL
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1224,7 +1292,7 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
   player.y = (useRow + 0.5) * TS;
   player.vx = 0; player.vy = 0;
 
-  // Clear entities; load NPCs from world map data
+  // Clear entities; load NPCs and triggers from world map data
   enemies = [];
   npcs = (m.npcs || []).map(n => ({
     x: (n.col + 0.5) * TS,
@@ -1234,6 +1302,8 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
     dialog: n.dialog ?? ['...'],
     isElder: false,
   }));
+  triggers = (m.triggers || []).map(t => ({ ...t }));
+  firedTriggers = new Set(); // reset one-shot tracking on every map load
   victoryDone = true; // no victory condition without enemies
 
   // Snap camera immediately
@@ -1326,6 +1396,7 @@ function gameLoop(ts) {
 
   updatePlayer(dt);
   checkMapExits();
+  checkWalkTriggers();
   updateEnemies(dt);
   updateParticles(dt);
   updateFloats(dt);
@@ -1373,6 +1444,7 @@ function gameLoop(ts) {
 
   // NPCs
   npcs.forEach(n=>drawNPC(n.x,n.y,n));
+  drawTriggerHints();
 
   // Enemies
   enemies.forEach(e => {
