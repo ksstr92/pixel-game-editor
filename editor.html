@@ -1067,14 +1067,16 @@ function openNpcModal(row, col) {
     if (tid >= 0) {
       const tint = tintTable[tid] || DEFAULT_TINT;
       pc.fillStyle = tint; pc.fillRect(0, 0, 32, 32);
-      if (monoSheet && monoSheet.complete && monoSheet.naturalWidth > 0) {
-        pc.save();
-        pc.globalCompositeOperation = 'multiply';
-        pc.imageSmoothingEnabled = false;
-        const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
-        if (baseId >= 0)
-          pc.drawImage(monoSheet, (baseId%17)*16, Math.floor(baseId/17)*16, 16,16, 0,0,32,32);
-        pc.restore();
+      const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
+      if (baseId >= 0) {
+        const img = tileImgs[baseId];
+        if (img && img.complete && img.naturalWidth > 0) {
+          pc.save();
+          pc.globalCompositeOperation = 'multiply';
+          pc.imageSmoothingEnabled = false;
+          pc.drawImage(img, 0, 0, 16, 16, 0, 0, 32, 32);
+          pc.restore();
+        }
       }
     }
   }
@@ -1188,14 +1190,15 @@ function renderSpawnOverlay() {
   if (ts >= 10) {
     mapCtx.save();
     mapCtx.imageSmoothingEnabled = false;
-    if (monoSheet && monoSheet.complete && monoSheet.naturalWidth > 0) {
+    const helmetImg = tileImgs[119];
+    if (helmetImg && helmetImg.complete && helmetImg.naturalWidth > 0) {
       // Multiply-blend the helmet tile (id 119) in gold over the highlight
       mapCtx.globalCompositeOperation = 'source-over';
       mapCtx.globalAlpha = 0.75;
       mapCtx.fillStyle = '#ffd060';
       mapCtx.fillRect(dx + ts*0.1, dy + ts*0.1, ts*0.8, ts*0.8);
       mapCtx.globalCompositeOperation = 'multiply';
-      mapCtx.drawImage(monoSheet, (119%17)*16, Math.floor(119/17)*16, 16, 16,
+      mapCtx.drawImage(helmetImg, 0, 0, 16, 16,
         dx + ts*0.1, dy + ts*0.1, ts*0.8, ts*0.8);
     } else {
       const fs = Math.min(ts * 0.42, 14);
@@ -1232,15 +1235,17 @@ function renderNpcOverlays() {
       mapCtx.save();
       mapCtx.imageSmoothingEnabled = false;
       const tid = npc.tileId ?? -1;
-      if (tid >= 0 && monoSheet && monoSheet.complete && monoSheet.naturalWidth > 0) {
+      const npcBaseId = tid >= 0
+        ? (tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1))
+        : -1;
+      const npcImg = npcBaseId >= 0 ? tileImgs[npcBaseId] : null;
+      if (npcImg && npcImg.complete && npcImg.naturalWidth > 0) {
         mapCtx.globalAlpha = 0.85;
         mapCtx.fillStyle = '#3ab8dc';
         mapCtx.fillRect(dx + ts*0.1, dy + ts*0.1, ts*0.8, ts*0.8);
         mapCtx.globalCompositeOperation = 'multiply';
-        const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
-        if (baseId >= 0)
-          mapCtx.drawImage(monoSheet, (baseId%17)*16, Math.floor(baseId/17)*16, 16, 16,
-            dx + ts*0.1, dy + ts*0.1, ts*0.8, ts*0.8);
+        mapCtx.drawImage(npcImg, 0, 0, 16, 16,
+          dx + ts*0.1, dy + ts*0.1, ts*0.8, ts*0.8);
       } else {
         const fs = Math.min(ts * 0.35, 13);
         mapCtx.fillStyle = '#3ab8dc';
