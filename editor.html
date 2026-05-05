@@ -1019,7 +1019,7 @@ function openNpcModal(row, col) {
   if (!cur) return;
   if (!cur.npcs) cur.npcs = [];
 
-  const existing = cur.npcs.find(n => n.row === row && n.col === col);
+  const existing = cur.npcs.find(n => +n.row === +row && +n.col === +col);
 
   const ov  = document.createElement('div'); ov.className = 'overlay';
   const box = document.createElement('div'); box.className = 'modal';
@@ -1096,9 +1096,9 @@ function openNpcModal(row, col) {
   // ── Buttons ──────────────────────────────────────────────
   const btns = document.createElement('div'); btns.className = 'modal-btns';
 
-  function makeBtn2(label, bg, col, fn) {
+  function makeBtn2(label, bg, clr, fn) {
     const b = document.createElement('button'); b.className = 'tbtn';
-    b.textContent = label; b.style.background = bg; b.style.color = col;
+    b.textContent = label; b.style.background = bg; b.style.color = clr;
     b.onclick = fn; return b;
   }
 
@@ -1116,7 +1116,8 @@ function openNpcModal(row, col) {
     makeBtn2('Cancel', '#2a2a2a', '#aaa', () => ov.remove()),
     makeBtn2(existing ? 'Save' : 'Add NPC', '#1a3a45', '#3ab8dc', () => {
       const name   = nameInp.value.trim() || 'Villager';
-      const tileId = Math.max(-1, Math.min(135, parseInt(tileIdInp.value) || -1));
+      const _tid = parseInt(tileIdInp.value, 10);
+      const tileId = Math.max(-1, Math.min(135, isNaN(_tid) ? -1 : _tid));
       const dialog = dialogTA.value.split('\n').map(s=>s.trim()).filter(Boolean);
       if (!dialog.length) dialog.push('...');
       if (existing) {
@@ -1131,6 +1132,7 @@ function openNpcModal(row, col) {
 
   box.append(h3, nameRow, tileRow, dialogLbl, dialogTA, btns);
   ov.appendChild(box); document.body.appendChild(ov);
+  ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
   nameInp.focus(); nameInp.select();
 }
 
