@@ -274,6 +274,7 @@ select.type-sel {
   <button class="tbtn" id="btn-pick"  title="Pick Tile [P]">🎯 Pick</button>
   <button class="tbtn" id="btn-exit"  title="Place/remove exit [X]">🚪 Exit</button>
   <button class="tbtn" id="btn-spawn" title="Set player spawn [S]">⚑ Spawn</button>
+  <button class="tbtn" id="btn-npc"   title="Place NPC [N]">👤 NPC</button>
   <div class="sep"></div>
   <span style="color:#555;">Zoom:</span>
   <button class="tbtn" id="btn-z1">1×</button>
@@ -735,7 +736,7 @@ function createNewMap(name) {
   const id = genMapId();
   const newTM = [];
   for (let r = 0; r < MAP_ROWS; r++) newTM.push(new Array(MAP_COLS).fill(-1));
-  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, exits: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } });
+  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, exits: [], npcs: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } });
   return id;
 }
 
@@ -775,7 +776,10 @@ function duplicateMap(id) {
   if (!src) return;
   const newId  = genMapId();
   const newMap = { id: newId, name: src.name + ' copy', cols: src.cols, rows: src.rows,
-                   tileMap: src.tileMap.map(r => [...r]) };
+                   tileMap: src.tileMap.map(r => [...r]),
+                   exits: (src.exits||[]).map(e=>({...e, id:'exit_'+genMapId()})),
+                   npcs:  (src.npcs||[]).map(n=>({...n, id:'npc_'+genMapId()})),
+                   spawn: src.spawn ? {...src.spawn} : undefined };
   const idx = worldMaps.findIndex(m => m.id === id);
   worldMaps.splice(idx + 1, 0, newMap);
   switchToMap(newId);
@@ -837,6 +841,33 @@ function renderMapsList() {
       spBtn.onclick = () => { setTool('spawn'); switchTab('palette'); toast('Click any cell to set the player spawn'); };
       spEl.append(spLbl, spBtn);
       list.appendChild(spEl);
+    }
+
+    // ── NPCs list under the active map ───────────────────
+    if (m.id === currentMapId && m.npcs?.length) {
+      m.npcs.forEach(npc => {
+        const npcEl = document.createElement('div');
+        npcEl.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 6px 3px 18px;font-size:10px;border-left:2px solid #1a3a4a;margin-bottom:2px;';
+
+        const lbl = document.createElement('span');
+        lbl.style.cssText = 'flex:1;color:#3ab8dc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;';
+        lbl.textContent = `👤 ${npc.name} (${npc.row},${npc.col})`;
+        lbl.title = `NPC "${npc.name}" at row ${npc.row}, col ${npc.col} — ${npc.dialog?.length ?? 0} dialog line(s)`;
+
+        const editBtnN = document.createElement('button');
+        editBtnN.className = 'tbtn mibtn'; editBtnN.textContent = '✏'; editBtnN.title = 'Edit NPC';
+        editBtnN.onclick = () => { setTool('npc'); openNpcModal(npc.row, npc.col); };
+
+        const delBtnN = document.createElement('button');
+        delBtnN.className = 'tbtn mibtn danger'; delBtnN.textContent = '✕'; delBtnN.title = 'Delete NPC';
+        delBtnN.onclick = () => {
+          const idx = m.npcs.indexOf(npc);
+          if (idx >= 0) { m.npcs.splice(idx, 1); renderMapsList(); renderMap(); }
+        };
+
+        npcEl.append(lbl, editBtnN, delBtnN);
+        list.appendChild(npcEl);
+      });
     }
 
     // ── Exits list under the active map ──────────────────
@@ -981,6 +1012,128 @@ function openExitModal(fromRow, fromCol) {
   ov.appendChild(box); document.body.appendChild(ov);
 }
 
+// ── NPC modal ─────────────────────────────────────────────
+
+function openNpcModal(row, col) {
+  const cur = worldMaps.find(m => m.id === currentMapId);
+  if (!cur) return;
+  if (!cur.npcs) cur.npcs = [];
+
+  const existing = cur.npcs.find(n => n.row === row && n.col === col);
+
+  const ov  = document.createElement('div'); ov.className = 'overlay';
+  const box = document.createElement('div'); box.className = 'modal';
+  box.style.minWidth = '420px';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = existing ? `Edit NPC (${row}, ${col})` : `Place NPC at (${row}, ${col})`;
+  h3.style.color = '#3ab8dc';
+
+  // ── Name field ──────────────────────────────────────────
+  const nameRow = document.createElement('div');
+  nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const nameLbl = document.createElement('label');
+  nameLbl.textContent = 'Name:'; nameLbl.style.color = '#888'; nameLbl.style.minWidth = '60px';
+  const nameInp = document.createElement('input');
+  nameInp.type = 'text'; nameInp.value = existing?.name ?? 'Villager';
+  nameInp.style.cssText = 'flex:1;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+  nameRow.append(nameLbl, nameInp);
+
+  // ── Tile selector ────────────────────────────────────────
+  const tileRow = document.createElement('div');
+  tileRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const tileLbl = document.createElement('label');
+  tileLbl.textContent = 'Tile:'; tileLbl.style.color = '#888'; tileLbl.style.minWidth = '60px';
+
+  // Preview canvas
+  const tilePrev = document.createElement('canvas');
+  tilePrev.width = 32; tilePrev.height = 32;
+  tilePrev.style.cssText = 'border:1px solid #444;image-rendering:pixelated;background:#161412;width:32px;height:32px;';
+
+  const tileIdInp = document.createElement('input');
+  tileIdInp.type = 'number'; tileIdInp.min = '-1'; tileIdInp.max = '135';
+  tileIdInp.value = existing?.tileId ?? 116; // default: wizard-looking tile
+  tileIdInp.style.cssText = 'width:60px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+
+  const useSelBtn = document.createElement('button');
+  useSelBtn.className = 'tbtn'; useSelBtn.textContent = 'Use selected tile';
+  useSelBtn.style.fontSize = '10px';
+  useSelBtn.onclick = () => { tileIdInp.value = selTile; updateTilePreview(); };
+
+  function updateTilePreview() {
+    const pc = tilePrev.getContext('2d');
+    pc.clearRect(0, 0, 32, 32);
+    const tid = parseInt(tileIdInp.value);
+    if (tid >= 0) {
+      const tint = tintTable[tid] || DEFAULT_TINT;
+      pc.fillStyle = tint; pc.fillRect(0, 0, 32, 32);
+      if (monoSheet && monoSheet.complete && monoSheet.naturalWidth > 0) {
+        pc.save();
+        pc.globalCompositeOperation = 'multiply';
+        pc.imageSmoothingEnabled = false;
+        const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
+        if (baseId >= 0)
+          pc.drawImage(monoSheet, (baseId%17)*16, Math.floor(baseId/17)*16, 16,16, 0,0,32,32);
+        pc.restore();
+      }
+    }
+  }
+  tileIdInp.addEventListener('input', updateTilePreview);
+  updateTilePreview();
+
+  tileRow.append(tileLbl, tilePrev, tileIdInp, useSelBtn);
+
+  // ── Dialog lines ─────────────────────────────────────────
+  const dialogLbl = document.createElement('div');
+  dialogLbl.style.cssText = 'color:#888;font-size:10px;margin-top:4px;';
+  dialogLbl.textContent = 'Dialog (one line per [E] press):';
+
+  const dialogTA = document.createElement('textarea');
+  dialogTA.style.cssText = 'background:#111;color:#9db;border:1px solid #2a2a2a;font-family:inherit;font-size:11px;padding:8px;resize:vertical;min-height:120px;width:100%;';
+  dialogTA.value = (existing?.dialog ?? ['Hello traveler.']).join('\n');
+  dialogTA.placeholder = 'Hello traveler.\nStay safe out there.';
+
+  // ── Buttons ──────────────────────────────────────────────
+  const btns = document.createElement('div'); btns.className = 'modal-btns';
+
+  function makeBtn2(label, bg, col, fn) {
+    const b = document.createElement('button'); b.className = 'tbtn';
+    b.textContent = label; b.style.background = bg; b.style.color = col;
+    b.onclick = fn; return b;
+  }
+
+  if (existing) {
+    const delBtn = makeBtn2('Delete NPC', '#3a1515', '#f88', () => {
+      const idx = cur.npcs.indexOf(existing);
+      if (idx >= 0) cur.npcs.splice(idx, 1);
+      ov.remove(); renderMap(); renderMapsList(); toast('NPC removed');
+    });
+    delBtn.style.marginRight = 'auto';
+    btns.appendChild(delBtn);
+  }
+
+  btns.append(
+    makeBtn2('Cancel', '#2a2a2a', '#aaa', () => ov.remove()),
+    makeBtn2(existing ? 'Save' : 'Add NPC', '#1a3a45', '#3ab8dc', () => {
+      const name   = nameInp.value.trim() || 'Villager';
+      const tileId = Math.max(-1, Math.min(135, parseInt(tileIdInp.value) || -1));
+      const dialog = dialogTA.value.split('\n').map(s=>s.trim()).filter(Boolean);
+      if (!dialog.length) dialog.push('...');
+      if (existing) {
+        existing.name = name; existing.tileId = tileId; existing.dialog = dialog;
+      } else {
+        cur.npcs.push({ id: 'npc_' + genMapId(), row, col, name, tileId, dialog });
+      }
+      ov.remove(); renderMap(); renderMapsList();
+      toast(existing ? `NPC "${name}" updated` : `NPC "${name}" placed at (${row}, ${col})`);
+    })
+  );
+
+  box.append(h3, nameRow, tileRow, dialogLbl, dialogTA, btns);
+  ov.appendChild(box); document.body.appendChild(ov);
+  nameInp.focus(); nameInp.select();
+}
+
 function renderExitOverlays() {
   const cur = worldMaps.find(m => m.id === currentMapId);
   if (!cur?.exits?.length) return;
@@ -1051,6 +1204,65 @@ function renderSpawnOverlay() {
     }
     mapCtx.restore();
   }
+}
+
+// ── NPC overlays ──────────────────────────────────────────
+
+function renderNpcOverlays() {
+  const cur = worldMaps.find(m => m.id === currentMapId);
+  if (!cur?.npcs?.length) return;
+  const ts = tileSize();
+
+  cur.npcs.forEach(npc => {
+    const dx = Math.round(npc.col * ts - camX);
+    const dy = Math.round(npc.row * ts - camY);
+    if (dx + ts < 0 || dx > mapCanvas.width || dy + ts < 0 || dy > mapCanvas.height) return;
+
+    // Cyan cell highlight
+    mapCtx.fillStyle = 'rgba(58, 184, 220, 0.22)';
+    mapCtx.fillRect(dx, dy, ts, ts);
+    mapCtx.strokeStyle = '#3ab8dc';
+    mapCtx.lineWidth = Math.max(1, ts * 0.05);
+    mapCtx.strokeRect(dx + 1, dy + 1, ts - 2, ts - 2);
+
+    // Draw the NPC tile (or '👤' label fallback)
+    if (ts >= 10) {
+      mapCtx.save();
+      mapCtx.imageSmoothingEnabled = false;
+      const tid = npc.tileId ?? -1;
+      if (tid >= 0 && monoSheet && monoSheet.complete && monoSheet.naturalWidth > 0) {
+        mapCtx.globalAlpha = 0.85;
+        mapCtx.fillStyle = '#3ab8dc';
+        mapCtx.fillRect(dx + ts*0.1, dy + ts*0.1, ts*0.8, ts*0.8);
+        mapCtx.globalCompositeOperation = 'multiply';
+        const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
+        if (baseId >= 0)
+          mapCtx.drawImage(monoSheet, (baseId%17)*16, Math.floor(baseId/17)*16, 16, 16,
+            dx + ts*0.1, dy + ts*0.1, ts*0.8, ts*0.8);
+      } else {
+        const fs = Math.min(ts * 0.35, 13);
+        mapCtx.fillStyle = '#3ab8dc';
+        mapCtx.font = `bold ${fs}px monospace`;
+        mapCtx.textAlign = 'center'; mapCtx.textBaseline = 'middle';
+        mapCtx.fillText('N', dx + ts/2, dy + ts/2);
+      }
+      mapCtx.restore();
+    }
+
+    // Name label above cell
+    if (ts >= 20 && npc.name) {
+      const fs = Math.min(ts * 0.22, 11);
+      mapCtx.save();
+      mapCtx.font = `${fs}px monospace`;
+      mapCtx.textAlign = 'center';
+      mapCtx.fillStyle = 'rgba(0,0,0,0.7)';
+      const tw = mapCtx.measureText(npc.name).width;
+      mapCtx.fillRect(dx + ts/2 - tw/2 - 2, dy - fs - 4, tw + 4, fs + 4);
+      mapCtx.fillStyle = '#8ee8f8';
+      mapCtx.fillText(npc.name, dx + ts/2, dy - 4);
+      mapCtx.restore();
+    }
+  });
 }
 
 // ── Minimap ────────────────────────────────────────────────
@@ -1127,6 +1339,13 @@ function renderMinimap() {
     mmCtx.fillStyle = '#3cd264';
     cur.exits.forEach(e =>
       mmCtx.fillRect(e.fromCol*MM_CELL, e.fromRow*MM_CELL, MM_CELL+1, MM_CELL+1));
+  }
+
+  // NPC dots (cyan)
+  if (cur?.npcs?.length) {
+    mmCtx.fillStyle = '#3ab8dc';
+    cur.npcs.forEach(n =>
+      mmCtx.fillRect(n.col*MM_CELL, n.row*MM_CELL, MM_CELL+1, MM_CELL+1));
   }
 
   // Spawn dot (gold, slightly larger)
@@ -1320,9 +1539,10 @@ function renderMap() {
     }
   }
 
-  // Overlays: spawn (gold), exits (green)
+  // Overlays: spawn (gold), exits (green), NPCs (cyan)
   renderSpawnOverlay();
   renderExitOverlays();
+  renderNpcOverlays();
 
   // Hover highlight
   if (hoverCell.r >= 0 && hoverCell.c >= 0 &&
@@ -1442,7 +1662,7 @@ function initMap(fill = -1) {
 // ── Tool / zoom ────────────────────────────────────────────
 function setTool(t) {
   tool = t;
-  ['paint','erase','fill','pick','exit','spawn'].forEach(n =>
+  ['paint','erase','fill','pick','exit','spawn','npc'].forEach(n =>
     document.getElementById('btn-'+n).classList.toggle('active', n === t)
   );
   mapCanvas.style.cursor = t === 'fill' ? 'cell' : t === 'pick' ? 'zoom-in' : 'crosshair';
@@ -1561,7 +1781,9 @@ function saveFile() {
 function loadFile() { document.getElementById('file-input').click(); }
 
 function loadWorldData(data) {
-  worldMaps       = data.maps || [];
+  worldMaps = (data.maps || []).map(m => ({
+    exits: [], npcs: [], ...m,    // ensure exits/npcs arrays exist on legacy maps
+  }));
   if (data.tintTable)    tintTable        = [...data.tintTable];
   if (data.typeTable)    typeTable        = [...data.typeTable];
   if (data.customNames)  customNames      = [...data.customNames];
@@ -1581,7 +1803,7 @@ function loadLegacyMap(data) {
     for (let c = 0; c < MAP_COLS; c++) row.push(data.tileMap[r]?.[c] ?? -1);
     tm.push(row);
   }
-  worldMaps = [{ id, name: 'Imported Map', cols: MAP_COLS, rows: MAP_ROWS, tileMap: tm, exits: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } }];
+  worldMaps = [{ id, name: 'Imported Map', cols: MAP_COLS, rows: MAP_ROWS, tileMap: tm, exits: [], npcs: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } }];
   if (data.tintTable?.length  === TOTAL_TILES) tintTable   = [...data.tintTable];
   if (data.typeTable?.length  === TOTAL_TILES) typeTable   = [...data.typeTable];
   if (data.customNames?.length=== TOTAL_TILES) customNames = [...data.customNames];
@@ -1755,6 +1977,8 @@ mapCanvas.addEventListener('mousedown', e => {
       if(mt>=0){ selTile=mt; renderPalette(); renderPreview(); setTool('paint'); }
     } else if(tool==='exit') {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openExitModal(r,c);
+    } else if(tool==='npc') {
+      if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openNpcModal(r,c);
     } else if(tool==='spawn') {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
         const cur = worldMaps.find(m=>m.id===currentMapId);
@@ -1839,6 +2063,7 @@ document.getElementById('btn-fill' ).onclick=()=>setTool('fill');
 document.getElementById('btn-pick' ).onclick=()=>setTool('pick');
 document.getElementById('btn-exit' ).onclick=()=>setTool('exit');
 document.getElementById('btn-spawn').onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
+document.getElementById('btn-npc'  ).onclick=()=>{ setTool('npc');   toast('Click any cell to place / edit an NPC'); };
 document.getElementById('btn-z1'   ).onclick=()=>setZoom(1);
 document.getElementById('btn-z2'   ).onclick=()=>setZoom(2);
 document.getElementById('btn-z3'   ).onclick=()=>setZoom(3);
@@ -1921,6 +2146,7 @@ document.addEventListener('keydown', e => {
     case 'f': setTool('fill');  break;
     case 'p': setTool('pick');  break;
     case 'x': setTool('exit');  break;
+    case 'n': setTool('npc');   break;
     case 's': setTool('spawn'); break;
     case 'g':
       showGrid=!showGrid;

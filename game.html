@@ -761,7 +761,25 @@ function drawNPC(x,y,npc) {
   const now=Date.now(), bob=Math.sin(now*0.0018)*1.2;
   const near = dist(player.x,player.y,x,y) < 44 * TILE_SCALE;
 
-  if (sheetReady) {
+  // ── Monochrome tileId path (world-map NPCs) ────────────
+  if (npc.tileId >= 0 && monoReady) {
+    const dx = Math.round(x - cam.x - TS/2);
+    const dy = Math.round(y - cam.y - TS/2) + Math.round(Math.sin(now*0.0018)*(TS*0.03));
+    // Background-sample composite (same as drawKnight — no colored rect)
+    _sprCtx.clearRect(0, 0, TS, TS);
+    _sprCtx.drawImage(ctx.canvas, dx, dy, TS, TS, 0, 0, TS, TS);
+    _sprCtx.globalCompositeOperation = 'multiply';
+    _sprCtx.imageSmoothingEnabled = false;
+    const baseId = worldData?.customTiles?.[npc.tileId]
+      ? (worldData.customTiles[npc.tileId].base >= 0 ? worldData.customTiles[npc.tileId].base : -1)
+      : npc.tileId;
+    if (baseId >= 0)
+      _sprCtx.drawImage(monoSheet, (baseId%17)*16, Math.floor(baseId/17)*16, 16,16, 0,0,TS,TS);
+    _sprCtx.globalCompositeOperation = 'source-over';
+    ctx.save(); ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(_sprBuf, dx, dy);
+    ctx.restore();
+  } else if (sheetReady) {
     sprEntAnim(npc.isElder ? SP.wizard : SP.merchant, sx, sy, false, 'idle', Date.now());
   } else {
   ctx.save();
@@ -1206,8 +1224,16 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
   player.y = (useRow + 0.5) * TS;
   player.vx = 0; player.vy = 0;
 
-  // Clear entities (no enemies in world maps by default)
-  enemies = []; npcs = [];
+  // Clear entities; load NPCs from world map data
+  enemies = [];
+  npcs = (m.npcs || []).map(n => ({
+    x: (n.col + 0.5) * TS,
+    y: (n.row + 0.5) * TS,
+    name:   n.name   ?? 'Villager',
+    tileId: n.tileId ?? -1,
+    dialog: n.dialog ?? ['...'],
+    isElder: false,
+  }));
   victoryDone = true; // no victory condition without enemies
 
   // Snap camera immediately
