@@ -756,6 +756,8 @@ function setEditorPixel(px, py, rgba) {
   }
   editedTiles.set(editingTileId, getEditImageData());
   renderEditorCanvas();
+  renderPalette();
+  renderMap();
 }
 
 function editorFloodFill(startX, startY, newColor) {
@@ -783,6 +785,8 @@ function editorFloodFill(startX, startY, newColor) {
   editCtx.putImageData(imgData, 0, 0);
   editedTiles.set(editingTileId, imgData);
   renderEditorCanvas();
+  renderPalette();
+  renderMap();
 }
 
 function duplicateCurrentTile() {
