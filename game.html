@@ -200,12 +200,13 @@ sheet.onload  = () => { sheetReady = true; };
 sheet.onerror = () => console.warn('Character atlas not found — using procedural graphics.');
 
 // ── Monochrome tileset — loaded from world.json assets ────────────────────────
-// 17 cols × 8 rows of 16×16px tiles, no gap (packed).
-// Source coord: x=(id%17)*16, y=floor(id/17)*16
+// Packed 16×16 tiles; column count detected from image width at draw time.
 const monoSheet = new Image();
 let monoReady = false;
 monoSheet.onload  = () => { monoReady = true; };
 monoSheet.onerror = () => console.warn('Monochrome tileset not found.');
+// Always derive columns from the actual loaded image — never hardcode 17.
+function monoCol() { return Math.max(1, Math.floor((monoSheet.naturalWidth  || 272) / 16)); }
 
 // Tile IDs from the Monochrome sheet (row×17 + col):
 const MT = {
@@ -237,7 +238,7 @@ function drawMonoTile(id, dx, dy, tint) {
   if (monoReady) {
     ctx.save();
     ctx.globalCompositeOperation = 'multiply';
-    ctx.drawImage(monoSheet, (id%17)*16, Math.floor(id/17)*16, 16, 16, dx, dy, TS, TS);
+    { const mc=monoCol(); ctx.drawImage(monoSheet, (id%mc)*16, Math.floor(id/mc)*16, 16, 16, dx, dy, TS, TS); }
     ctx.restore();
   }
 }
@@ -499,7 +500,7 @@ function drawTile(r,c) {
     const ct    = worldData.customTiles?.[mt];
     const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : mt;
     if (baseId >= 0 && monoReady)
-      ctx.drawImage(monoSheet, (baseId%17)*16, Math.floor(baseId/17)*16, 16, 16, dx, dy, TS, TS);
+      { const mc=monoCol(); ctx.drawImage(monoSheet, (baseId%mc)*16, Math.floor(baseId/mc)*16, 16, 16, dx, dy, TS, TS); }
     if (ct?.pixels) { const cv = getWorldTileCanvas(mt); if (cv) ctx.drawImage(cv, dx, dy, TS, TS); }
     ctx.restore();
   } else {
@@ -519,10 +520,10 @@ function drawMap() {
       drawTile(r, c);
   // Overlay layer — drawn on top; skip background fill so base tile shows through
   if (visualOverlay && monoReady && worldData) {
-    const sheetCols = Math.floor(monoSheet.naturalWidth / 16) || 17;
     ctx.save();
     ctx.globalCompositeOperation = 'multiply';
     ctx.imageSmoothingEnabled = true;
+    const mc = monoCol();
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) {
         const ot = visualOverlay[r]?.[c] ?? -1;
@@ -531,7 +532,7 @@ function drawMap() {
         const ct = worldData.customTiles?.[ot];
         const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : ot;
         if (baseId >= 0)
-          ctx.drawImage(monoSheet, (baseId%sheetCols)*16, Math.floor(baseId/sheetCols)*16, 16, 16, dx, dy, TS, TS);
+          ctx.drawImage(monoSheet, (baseId%mc)*16, Math.floor(baseId/mc)*16, 16, 16, dx, dy, TS, TS);
         if (ct?.pixels) { const cv = getWorldTileCanvas(ot); if (cv) ctx.drawImage(cv, dx, dy, TS, TS); }
       }
     }
@@ -783,7 +784,7 @@ function drawNPC(x,y,npc) {
       ? (worldData.customTiles[npc.tileId].base >= 0 ? worldData.customTiles[npc.tileId].base : -1)
       : npc.tileId;
     if (baseId >= 0)
-      _sprCtx.drawImage(monoSheet, (baseId%17)*16, Math.floor(baseId/17)*16, 16,16, 0,0,TS,TS);
+      { const mc=monoCol(); _sprCtx.drawImage(monoSheet, (baseId%mc)*16, Math.floor(baseId/mc)*16, 16,16, 0,0,TS,TS); }
     _sprCtx.globalCompositeOperation = 'source-over';
     ctx.save(); ctx.imageSmoothingEnabled = false;
     ctx.drawImage(_sprBuf, dx, dy);
