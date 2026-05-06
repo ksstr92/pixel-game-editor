@@ -294,6 +294,18 @@ select.type-sel {
 </head>
 <body>
 
+<!-- MAPS POPUP -->
+<div id="maps-overlay" class="overlay" onclick="if(event.target===this)closeMapsPopup()">
+  <div style="background:#1c1c1c;border:1px solid #3a3a3a;padding:14px 16px;min-width:320px;max-width:480px;max-height:80vh;display:flex;flex-direction:column;gap:8px;">
+    <h3 style="color:#9ce;margin:0;">World Maps</h3>
+    <div id="maps-popup-list" style="overflow-y:auto;flex:1;"></div>
+    <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;">
+      <button class="tbtn import-btn" onclick="createAndSwitch();renderMapsPopup()">+ New Map</button>
+      <button class="tbtn" onclick="closeMapsPopup()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- TILE EDITOR POPUP -->
 <div id="tile-editor-overlay" class="overlay" onclick="if(event.target===this)closeTileEditorPopup()">
   <div id="tile-editor-box">
@@ -321,7 +333,7 @@ select.type-sel {
   <div id="help-box">
     <h3>Keyboard Shortcuts &amp; Help</h3>
     <p style="color:#9ce;margin-bottom:2px;font-size:12px;">Tools</p>
-    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">B</b> Paint &nbsp;|&nbsp; <b style="color:#bbb">E</b> Erase &nbsp;|&nbsp; <b style="color:#bbb">F</b> Fill &nbsp;|&nbsp; <b style="color:#bbb">P</b> Pick &nbsp;|&nbsp; <b style="color:#bbb">X</b> Exit &nbsp;|&nbsp; <b style="color:#bbb">S</b> Spawn</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">B</b> Paint &nbsp;|&nbsp; <b style="color:#bbb">E</b> Erase &nbsp;|&nbsp; <b style="color:#bbb">F</b> Fill &nbsp;|&nbsp; <b style="color:#bbb">P</b> Pick &nbsp;|&nbsp; <b style="color:#bbb">X</b> Waypoint &nbsp;|&nbsp; <b style="color:#bbb">S</b> Spawn</p>
     <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">G</b> Grid &nbsp;|&nbsp; <b style="color:#bbb">+/−</b> Zoom</p>
     <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Ctrl+Z</b> Undo &nbsp;|&nbsp; <b style="color:#bbb">Ctrl+Y</b> Redo</p>
     <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Arrow keys</b> Scroll map</p>
@@ -339,7 +351,7 @@ select.type-sel {
     <br>
     <p style="color:#9ce;margin-bottom:2px;font-size:12px;">World</p>
     <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Save World</b> downloads world.json (all maps + exits + tints).</p>
-    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">X</b> Exit tool — click any cell to link it to another map.</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">X</b> Waypoint tool — click any cell to link it to another map.</p>
     <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">S</b> Spawn tool — click any cell to set the player start position.</p>
     <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Minimap</b> (bottom-right) — click or drag to pan the camera.</p>
     <p style="color:#777;line-height:1.9;font-size:11px;">Auto-saves to browser storage every 30s.</p>
@@ -363,10 +375,11 @@ select.type-sel {
   <button class="tbtn" id="btn-erase" title="Erase [E]">✕ Erase</button>
   <button class="tbtn" id="btn-fill"  title="Flood Fill [F]">⬛ Fill</button>
   <button class="tbtn" id="btn-pick"  title="Pick Tile [P]">🎯 Pick</button>
-  <button class="tbtn" id="btn-exit"  title="Place/remove exit [X]">🚪 Exit</button>
-  <button class="tbtn" id="btn-spawn" title="Set player spawn [S]">⚑ Spawn</button>
-  <button class="tbtn" id="btn-npc"     title="Place NPC [N]">👤 NPC</button>
+  <button class="tbtn" id="btn-exit"    title="Place/remove waypoint [X]">🚪 Waypoint</button>
+  <button class="tbtn" id="btn-spawn"   title="Set player spawn [S]" style="display:none">⚑ Spawn</button>
+  <button class="tbtn" id="btn-npc"     title="Place NPC [N]"        style="display:none">👤 NPC</button>
   <button class="tbtn" id="btn-trigger" title="Place Trigger [T]">⚡ Trigger</button>
+  <button class="tbtn" id="btn-maps"    title="Manage maps">🗺 Maps</button>
   <div class="sep"></div>
   <span style="color:#555;">Zoom:</span>
   <select id="zoom-select" class="type-sel" title="Zoom level">
@@ -379,7 +392,7 @@ select.type-sel {
   <button class="tbtn active" id="btn-grid" title="Toggle Grid [G]">▦ Grid</button>
   <div class="sep"></div>
   <button class="tbtn import-btn" id="btn-import">⬇ Import</button>
-  <button class="tbtn" id="btn-save">💾 Save World</button>
+  <button class="tbtn" id="btn-save">💾 Save</button>
   <button class="tbtn" id="btn-load-file">📂 Load</button>
   <div class="sep"></div>
   <button class="tbtn danger" id="btn-clear">🗑 Clear</button>
@@ -390,13 +403,18 @@ select.type-sel {
 <div id="main">
   <div id="sidebar">
     <div id="sidebar-tabs">
-      <div class="stab active" id="tab-palette" onclick="switchTab('palette')">Palette</div>
-      <div class="stab" id="tab-maps"    onclick="switchTab('maps')">Maps</div>
+      <div class="stab active" id="tab-palette" onclick="switchTab('palette')">Tiles</div>
       <div class="stab" id="tab-assets"  onclick="switchTab('assets')">Assets</div>
     </div>
 
     <div id="palette-scroll">
       <canvas id="palette-canvas"></canvas>
+      <!-- Placement tools shown inside the Tiles tab -->
+      <div id="placement-tools" style="display:flex;gap:4px;flex-wrap:wrap;padding:6px 6px 2px;">
+        <button class="tbtn" id="tab-btn-exit"  title="Place/remove waypoint [X]" onclick="setTool('exit')">🚪 Waypoint</button>
+        <button class="tbtn" id="tab-btn-spawn" title="Set player spawn [S]"       onclick="setTool('spawn')">⚑ Spawn</button>
+        <button class="tbtn" id="tab-btn-npc"   title="Place NPC [N]"              onclick="setTool('npc')">👤 NPC</button>
+      </div>
       <div id="maps-panel">
         <div class="maps-hdr">
           <span>World Maps</span>
@@ -919,7 +937,7 @@ function renderMapsList() {
       spLbl.title = 'Use the Spawn tool (S) to move this';
       const spBtn = document.createElement('button');
       spBtn.className = 'tbtn mibtn'; spBtn.textContent = '✏'; spBtn.title = 'Activate spawn tool';
-      spBtn.onclick = () => { setTool('spawn'); switchTab('palette'); toast('Click any cell to set the player spawn'); };
+      spBtn.onclick = () => { setTool('spawn'); switchTab('palette'); closeMapsPopup(); toast('Click any cell to set the player spawn'); };
       spEl.append(spLbl, spBtn);
       list.appendChild(spEl);
     }
@@ -1010,6 +1028,8 @@ function renderMapsList() {
       });
     }
   });
+  // Keep popup in sync if it's open
+  if (document.getElementById('maps-overlay')?.style.display !== 'none') renderMapsPopup();
 }
 
 // ── Serialize / deserialize custom tile data ───────────────
@@ -2091,6 +2111,11 @@ function setTool(t) {
   ['paint','erase','fill','pick','exit','spawn','npc','trigger'].forEach(n =>
     document.getElementById('btn-'+n).classList.toggle('active', n === t)
   );
+  // Mirror active state on in-tab placement buttons
+  ['exit','spawn','npc'].forEach(n => {
+    const el = document.getElementById('tab-btn-'+n);
+    if (el) el.classList.toggle('active', n === t);
+  });
   mapCanvas.style.cursor = t === 'fill' ? 'cell' : t === 'pick' ? 'zoom-in' : 'crosshair';
 }
 
@@ -2269,15 +2294,60 @@ function closeHelpPopup() {
   document.getElementById('help-overlay').style.display = 'none';
 }
 
+function renderMapsPopup() {
+  const list = document.getElementById('maps-popup-list');
+  if (!list) return;
+  list.innerHTML = '';
+  worldMaps.forEach((m, idx) => {
+    const item = document.createElement('div');
+    item.style.cssText = 'display:flex;align-items:center;gap:4px;padding:5px 6px;margin-bottom:3px;background:#1e1e1e;border:1px solid #2a2a2a;border-radius:3px;cursor:pointer;';
+    if (m.id === currentMapId) item.style.background = '#1a2530', item.style.borderColor = '#2e6090';
+
+    const badge = document.createElement('span');
+    badge.style.cssText = 'color:#444;font-size:9px;min-width:14px;text-align:right;flex-shrink:0;';
+    badge.textContent = idx + 1;
+
+    const nameEl = document.createElement('input');
+    nameEl.type = 'text'; nameEl.value = m.name;
+    nameEl.style.cssText = 'flex:1;background:transparent;border:none;color:'+(m.id===currentMapId?'#9ce':'#bbb')+';font-family:inherit;font-size:11px;outline:none;cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;';
+    nameEl.addEventListener('click', e => { if (m.id !== currentMapId) { switchToMap(m.id); renderMapsPopup(); } else nameEl.select(); e.stopPropagation(); });
+    nameEl.addEventListener('input', () => renameMap(m.id, nameEl.value));
+
+    const dupBtn = document.createElement('button');
+    dupBtn.className = 'tbtn mibtn'; dupBtn.title = 'Duplicate'; dupBtn.textContent = '⧉';
+    dupBtn.onclick = e => { e.stopPropagation(); duplicateMap(m.id); renderMapsPopup(); };
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'tbtn mibtn danger'; delBtn.title = 'Delete'; delBtn.textContent = '✕';
+    delBtn.disabled = worldMaps.length <= 1;
+    delBtn.onclick = e => { e.stopPropagation(); deleteMap(m.id); renderMapsPopup(); };
+
+    item.addEventListener('click', () => { if (m.id !== currentMapId) { switchToMap(m.id); renderMapsPopup(); } });
+    item.append(badge, nameEl, dupBtn, delBtn);
+    list.appendChild(item);
+  });
+}
+
+function openMapsPopup() {
+  renderMapsPopup();
+  document.getElementById('maps-overlay').style.display = 'flex';
+}
+
+function closeMapsPopup() {
+  document.getElementById('maps-overlay').style.display = 'none';
+}
+
 function switchTab(tab) {
   if (tab === 'editor') { openTileEditorPopup(); return; }
-  document.getElementById('palette-canvas').style.display = tab === 'palette' ? 'block' : 'none';
-  document.getElementById('maps-panel'   ).style.display  = tab === 'maps'    ? 'block' : 'none';
-  document.getElementById('assets-panel' ).style.display  = tab === 'assets'  ? 'block' : 'none';
-  ['palette','maps','assets'].forEach(t =>
+  if (tab === 'maps')   { openMapsPopup(); return; }
+  const showPalette = tab === 'palette';
+  document.getElementById('palette-canvas'  ).style.display = showPalette ? 'block' : 'none';
+  document.getElementById('placement-tools' ).style.display = showPalette ? 'flex'  : 'none';
+  document.getElementById('maps-panel'      ).style.display = 'none';
+  document.getElementById('assets-panel'    ).style.display = tab === 'assets' ? 'block' : 'none';
+  ['palette','assets'].forEach(t =>
     document.getElementById('tab-' + t).classList.toggle('active', t === tab)
   );
-  if (tab === 'maps')   renderMapsList();
   if (tab === 'assets') renderAssetsPanel();
 }
 
@@ -2656,9 +2726,10 @@ document.getElementById('btn-paint').onclick=()=>setTool('paint');
 document.getElementById('btn-erase').onclick=()=>setTool('erase');
 document.getElementById('btn-fill' ).onclick=()=>setTool('fill');
 document.getElementById('btn-pick' ).onclick=()=>setTool('pick');
-document.getElementById('btn-exit' ).onclick=()=>setTool('exit');
-document.getElementById('btn-spawn').onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
-document.getElementById('btn-npc'    ).onclick=()=>{ setTool('npc');     toast('Click any cell to place / edit an NPC'); };
+document.getElementById('btn-exit'  ).onclick=()=>setTool('exit');
+document.getElementById('btn-spawn' ).onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
+document.getElementById('btn-npc'   ).onclick=()=>{ setTool('npc'); toast('Click any cell to place / edit an NPC'); };
+document.getElementById('btn-maps'  ).onclick=()=>openMapsPopup();
 document.getElementById('btn-trigger').onclick=()=>{ setTool('trigger'); toast('Click any cell to place / edit a trigger'); };
 document.getElementById('zoom-select').addEventListener('change', e => setZoom(parseInt(e.target.value)));
 document.getElementById('btn-grid' ).onclick=()=>{
