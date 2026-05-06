@@ -922,12 +922,12 @@ function renderMapsList() {
         const trigEl = document.createElement('div');
         trigEl.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 6px 3px 18px;font-size:10px;border-left:2px solid #7a4a00;margin-bottom:2px;';
 
-        const icon = trig.type === 'chest' ? '◆' : trig.type === 'zone' ? '~' : '!';
+        const evtIcons = (trig.events||[]).map(e => ({dialog:'💬',cameraPan:'📷',tileChange:'🔲'})[e.type]||'?').join('');
         const act  = trig.activation === 'walk' ? '🚶' : '[E]';
         const lbl3 = document.createElement('span');
         lbl3.style.cssText = 'flex:1;color:#ff9a00;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;';
-        lbl3.textContent = `${icon} ${trig.title || '(untitled)'} ${act} (${trig.row},${trig.col})`;
-        lbl3.title = `${trig.type} trigger at (${trig.row},${trig.col}) — ${trig.lines?.length ?? 0} line(s)${trig.oneShot ? ' • one-shot' : ''}`;
+        lbl3.textContent = `${evtIcons||'⚡'} ${trig.title || '(untitled)'} ${act} (${trig.row},${trig.col})`;
+        lbl3.title = `${trig.events?.length ?? 0} event(s) at (${trig.row},${trig.col})${trig.oneShot ? ' • one-shot' : ''}`;
 
         const editBtnT = document.createElement('button');
         editBtnT.className = 'tbtn mibtn'; editBtnT.textContent = '✏'; editBtnT.title = 'Edit Trigger';
@@ -1084,51 +1084,52 @@ function openNpcModal(row, col) {
   nameInp.style.cssText = 'flex:1;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
   nameRow.append(nameLbl, nameInp);
 
-  // ── Tile selector ────────────────────────────────────────
-  const tileRow = document.createElement('div');
-  tileRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
-  const tileLbl = document.createElement('label');
-  tileLbl.textContent = 'Tile:'; tileLbl.style.color = '#888'; tileLbl.style.minWidth = '60px';
+  // ── Tile selector (editing only — new NPCs use the active palette tile) ─────
+  let tileRow = null, tileIdInp = null;
+  if (existing) {
+    tileRow = document.createElement('div');
+    tileRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const tileLbl = document.createElement('label');
+    tileLbl.textContent = 'Tile:'; tileLbl.style.color = '#888'; tileLbl.style.minWidth = '60px';
 
-  // Preview canvas
-  const tilePrev = document.createElement('canvas');
-  tilePrev.width = 32; tilePrev.height = 32;
-  tilePrev.style.cssText = 'border:1px solid #444;image-rendering:pixelated;background:#161412;width:32px;height:32px;';
+    const tilePrev = document.createElement('canvas');
+    tilePrev.width = 32; tilePrev.height = 32;
+    tilePrev.style.cssText = 'border:1px solid #444;image-rendering:pixelated;background:#161412;width:32px;height:32px;';
 
-  const tileIdInp = document.createElement('input');
-  tileIdInp.type = 'number'; tileIdInp.min = '-1'; tileIdInp.max = '135';
-  tileIdInp.value = existing?.tileId ?? 116; // default: wizard-looking tile
-  tileIdInp.style.cssText = 'width:60px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+    tileIdInp = document.createElement('input');
+    tileIdInp.type = 'number'; tileIdInp.min = '-1'; tileIdInp.max = '135';
+    tileIdInp.value = existing.tileId;
+    tileIdInp.style.cssText = 'width:60px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
 
-  const useSelBtn = document.createElement('button');
-  useSelBtn.className = 'tbtn'; useSelBtn.textContent = 'Use selected tile';
-  useSelBtn.style.fontSize = '10px';
-  useSelBtn.onclick = () => { tileIdInp.value = selTile; updateTilePreview(); };
+    const useSelBtn = document.createElement('button');
+    useSelBtn.className = 'tbtn'; useSelBtn.textContent = 'Use selected tile';
+    useSelBtn.style.fontSize = '10px';
+    useSelBtn.onclick = () => { tileIdInp.value = selTile; updateTilePreview(); };
 
-  function updateTilePreview() {
-    const pc = tilePrev.getContext('2d');
-    pc.clearRect(0, 0, 32, 32);
-    const tid = parseInt(tileIdInp.value);
-    if (tid >= 0) {
-      const tint = tintTable[tid] || DEFAULT_TINT;
-      pc.fillStyle = tint; pc.fillRect(0, 0, 32, 32);
-      const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
-      if (baseId >= 0) {
-        const img = tileImgs[baseId];
-        if (img && img.complete && img.naturalWidth > 0) {
-          pc.save();
-          pc.globalCompositeOperation = 'multiply';
-          pc.imageSmoothingEnabled = false;
-          pc.drawImage(img, 0, 0, 16, 16, 0, 0, 32, 32);
-          pc.restore();
+    function updateTilePreview() {
+      const pc = tilePrev.getContext('2d');
+      pc.clearRect(0, 0, 32, 32);
+      const tid = parseInt(tileIdInp.value);
+      if (tid >= 0) {
+        const tint = tintTable[tid] || DEFAULT_TINT;
+        pc.fillStyle = tint; pc.fillRect(0, 0, 32, 32);
+        const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
+        if (baseId >= 0) {
+          const img = tileImgs[baseId];
+          if (img && img.complete && img.naturalWidth > 0) {
+            pc.save();
+            pc.globalCompositeOperation = 'multiply';
+            pc.imageSmoothingEnabled = false;
+            pc.drawImage(img, 0, 0, 16, 16, 0, 0, 32, 32);
+            pc.restore();
+          }
         }
       }
     }
+    tileIdInp.addEventListener('input', updateTilePreview);
+    updateTilePreview();
+    tileRow.append(tileLbl, tilePrev, tileIdInp, useSelBtn);
   }
-  tileIdInp.addEventListener('input', updateTilePreview);
-  updateTilePreview();
-
-  tileRow.append(tileLbl, tilePrev, tileIdInp, useSelBtn);
 
   // ── Dialog lines ─────────────────────────────────────────
   const dialogLbl = document.createElement('div');
@@ -1163,8 +1164,9 @@ function openNpcModal(row, col) {
     makeBtn2('Cancel', '#2a2a2a', '#aaa', () => ov.remove()),
     makeBtn2(existing ? 'Save' : 'Add NPC', '#1a3a45', '#3ab8dc', () => {
       const name   = nameInp.value.trim() || 'Villager';
-      const _tid = parseInt(tileIdInp.value, 10);
-      const tileId = Math.max(-1, Math.min(135, isNaN(_tid) ? -1 : _tid));
+      const tileId = existing
+        ? Math.max(-1, Math.min(135, parseInt(tileIdInp.value, 10) || -1))
+        : selTile;
       const dialog = dialogTA.value.split('\n').map(s=>s.trim()).filter(Boolean);
       if (!dialog.length) dialog.push('...');
       if (existing) {
@@ -1177,7 +1179,7 @@ function openNpcModal(row, col) {
     })
   );
 
-  box.append(h3, nameRow, tileRow, dialogLbl, dialogTA, btns);
+  box.append(h3, nameRow, ...(tileRow ? [tileRow] : []), dialogLbl, dialogTA, btns);
   ov.appendChild(box); document.body.appendChild(ov);
   ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
   nameInp.focus(); nameInp.select();
@@ -1388,79 +1390,177 @@ function openTriggerModal(row, col) {
 
   const existing = cur.triggers.find(t => +t.row === +row && +t.col === +col);
 
+  // Migrate legacy format (lines → events)
+  let events = [];
+  if (existing?.events?.length) {
+    events = existing.events.map(e => ({
+      ...e,
+      lines:   e.lines   ? [...e.lines]                    : undefined,
+      changes: e.changes ? e.changes.map(c => ({ ...c })) : undefined,
+    }));
+  } else if (existing?.lines?.length) {
+    events = [{ type: 'dialog', lines: [...existing.lines] }];
+  }
+
   const ov  = document.createElement('div'); ov.className = 'overlay';
   const box = document.createElement('div'); box.className = 'modal';
-  box.style.minWidth = '440px';
+  box.style.minWidth  = '480px';
+  box.style.maxHeight = '85vh';
+  box.style.overflowY = 'auto';
 
   const h3 = document.createElement('h3');
   h3.textContent = existing ? `Edit Trigger (${row}, ${col})` : `Place Trigger at (${row}, ${col})`;
   h3.style.color = '#ff9a00';
 
-  // ── Type row ─────────────────────────────────────────────
-  function makeRow(labelTxt) {
-    const row2 = document.createElement('div');
-    row2.style.cssText = 'display:flex;align-items:center;gap:8px;';
-    const lbl = document.createElement('label');
-    lbl.textContent = labelTxt; lbl.style.color = '#888'; lbl.style.minWidth = '80px';
-    row2.appendChild(lbl);
-    return { row: row2, lbl };
+  // ── Helpers ──────────────────────────────────────────────
+  const SS = 'background:#111;color:#fc8;border:1px solid #3a3a3a;padding:3px 6px;font-family:inherit;font-size:11px;flex:1;';
+  function mkRow(labelTxt) {
+    const r = document.createElement('div'); r.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const l = document.createElement('label'); l.textContent = labelTxt; l.style.cssText = 'color:#888;min-width:80px;';
+    r.appendChild(l); return r;
+  }
+  function mkb(label, bg, clr, fn) {
+    const b = document.createElement('button'); b.className = 'tbtn';
+    b.textContent = label; b.style.background = bg; b.style.color = clr; b.onclick = fn; return b;
   }
 
-  const { row: typeRow } = makeRow('Type:');
-  const typeSel = document.createElement('select');
-  typeSel.style.cssText = 'background:#111;color:#fc8;border:1px solid #3a3a3a;padding:3px 6px;font-family:inherit;font-size:11px;flex:1;';
-  [['message','💬 Message (sign / lore)'],['chest','◆ Chest (collectible)'],['zone','~ Zone Entry (invisible)']]
-    .forEach(([v,l]) => { const o = document.createElement('option'); o.value=v; o.textContent=l; typeSel.appendChild(o); });
-  typeSel.value = existing?.type ?? 'message';
-  typeRow.appendChild(typeSel);
-
-  // ── Activation row ───────────────────────────────────────
-  const { row: actRow } = makeRow('Activate:');
-  const actSel = document.createElement('select');
-  actSel.style.cssText = typeSel.style.cssText;
-  [['walk','🚶 Walk-over (player steps on cell)'],['interact','[E] Interact (press E nearby)']]
+  // ── Activation ───────────────────────────────────────────
+  const actRow = mkRow('Activate:');
+  const actSel = document.createElement('select'); actSel.style.cssText = SS;
+  [['interact','[E] Interact'],['walk','🚶 Walk-over']]
     .forEach(([v,l]) => { const o = document.createElement('option'); o.value=v; o.textContent=l; actSel.appendChild(o); });
   actSel.value = existing?.activation ?? 'interact';
   actRow.appendChild(actSel);
 
-  // ── Title row ────────────────────────────────────────────
-  const { row: titleRow } = makeRow('Title:');
+  // ── Title ─────────────────────────────────────────────────
+  const titleRow = mkRow('Title:');
   const titleInp = document.createElement('input');
   titleInp.type='text'; titleInp.value = existing?.title ?? '';
   titleInp.placeholder = 'Ancient Stone, Village Well…';
   titleInp.style.cssText = 'flex:1;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
   titleRow.appendChild(titleInp);
 
-  // ── One-shot checkbox ─────────────────────────────────────
-  const oneShotRow = document.createElement('div');
-  oneShotRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
-  const osChk = document.createElement('input');
-  osChk.type='checkbox'; osChk.checked = existing?.oneShot ?? true;
-  osChk.style.accentColor='#ff9a00';
-  const osLbl = document.createElement('label');
-  osLbl.textContent = 'One-shot (fires only once per map visit)';
-  osLbl.style.color = '#888'; osLbl.style.fontSize = '11px';
+  // ── One-shot ──────────────────────────────────────────────
+  const oneShotRow = document.createElement('div'); oneShotRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const osChk = document.createElement('input'); osChk.type='checkbox'; osChk.checked = existing?.oneShot ?? true; osChk.style.accentColor='#ff9a00';
+  const osLbl = document.createElement('label'); osLbl.textContent = 'One-shot (fires only once per map visit)'; osLbl.style.cssText = 'color:#888;font-size:11px;';
   oneShotRow.append(osChk, osLbl);
 
-  // ── Dialog lines ─────────────────────────────────────────
-  const dialogLbl = document.createElement('div');
-  dialogLbl.style.cssText = 'color:#888;font-size:10px;margin-top:4px;';
-  dialogLbl.textContent = 'Dialog lines (one line per [E] / continue press):';
+  // ── Events section ────────────────────────────────────────
+  const eventsHdr = document.createElement('div');
+  eventsHdr.style.cssText = 'color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;';
+  eventsHdr.textContent = 'Events — run in order';
 
-  const dialogTA = document.createElement('textarea');
-  dialogTA.style.cssText = 'background:#111;color:#fc8;border:1px solid #2a2a2a;font-family:inherit;font-size:11px;padding:8px;resize:vertical;min-height:100px;width:100%;';
-  dialogTA.value = (existing?.lines ?? ['…']).join('\n');
-  dialogTA.placeholder = 'The stone reads: Beware the dark below.\nMany heroes have not returned.';
+  const eventsList = document.createElement('div');
+  eventsList.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
 
-  // ── Buttons ──────────────────────────────────────────────
-  const btns = document.createElement('div'); btns.className = 'modal-btns';
+  function renderEventsList() {
+    eventsList.innerHTML = '';
 
-  function mkb(label, bg, clr, fn) {
-    const b = document.createElement('button'); b.className = 'tbtn';
-    b.textContent = label; b.style.background = bg; b.style.color = clr;
-    b.onclick = fn; return b;
+    events.forEach((evt, i) => {
+      const card = document.createElement('div');
+      card.style.cssText = 'background:#1a1a1a;border:1px solid #333;border-radius:3px;padding:8px;';
+
+      // Card header
+      const hdr = document.createElement('div'); hdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+      const typeLbl = document.createElement('span'); typeLbl.style.cssText = 'flex:1;color:#fc8;font-size:11px;font-weight:bold;';
+      typeLbl.textContent = { dialog:'💬 Dialog', cameraPan:'📷 Camera Pan', tileChange:'🔲 Tile Change' }[evt.type] || evt.type;
+      const delBtn = document.createElement('button'); delBtn.className='tbtn danger'; delBtn.textContent='✕'; delBtn.style.cssText='padding:1px 5px;font-size:10px;';
+      delBtn.onclick = () => { events.splice(i, 1); renderEventsList(); };
+      hdr.append(typeLbl, delBtn);
+      card.appendChild(hdr);
+
+      if (evt.type === 'dialog') {
+        // ── Dialog ─────────────────────────────────────────
+        const ta = document.createElement('textarea');
+        ta.style.cssText = 'background:#111;color:#fc8;border:1px solid #2a2a2a;font-family:inherit;font-size:11px;padding:6px;resize:vertical;min-height:70px;width:100%;box-sizing:border-box;';
+        ta.placeholder = 'One line per [E] press…';
+        ta.value = (evt.lines || []).join('\n');
+        ta.addEventListener('input', () => { evt.lines = ta.value.split('\n').map(s => s.trim()).filter(Boolean); });
+        card.appendChild(ta);
+
+      } else if (evt.type === 'cameraPan') {
+        // ── Camera Pan ─────────────────────────────────────
+        const body = document.createElement('div'); body.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
+        function numInp(label, val, min, max, step, onChange) {
+          const w = document.createElement('div'); w.style.cssText = 'display:flex;align-items:center;gap:3px;';
+          const l = document.createElement('span'); l.textContent = label; l.style.cssText = 'color:#888;font-size:10px;';
+          const inp = document.createElement('input'); inp.type='number'; inp.min=min; inp.max=max; inp.step=step; inp.value=val;
+          inp.style.cssText = 'width:54px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:2px 4px;font-family:inherit;font-size:11px;';
+          inp.addEventListener('input', () => onChange(parseFloat(inp.value)));
+          w.append(l, inp); return w;
+        }
+        body.appendChild(numInp('Row',      evt.row      ?? row, 0, MAP_ROWS-1, 1,   v => evt.row      = Math.round(v) || 0));
+        body.appendChild(numInp('Col',      evt.col      ?? col, 0, MAP_COLS-1, 1,   v => evt.col      = Math.round(v) || 0));
+        body.appendChild(numInp('Duration', evt.duration ?? 2.0, 0.1, 10, 0.1,      v => evt.duration = v || 0.1));
+        const retW = document.createElement('div'); retW.style.cssText = 'display:flex;align-items:center;gap:3px;';
+        const retChk = document.createElement('input'); retChk.type='checkbox'; retChk.checked = evt.return ?? true; retChk.style.accentColor='#fc8';
+        retChk.addEventListener('change', () => evt.return = retChk.checked);
+        const retL = document.createElement('span'); retL.textContent = 'Return'; retL.style.cssText = 'color:#888;font-size:10px;';
+        retW.append(retChk, retL);
+        body.appendChild(retW);
+        card.appendChild(body);
+
+      } else if (evt.type === 'tileChange') {
+        // ── Tile Change ────────────────────────────────────
+        if (!evt.changes) evt.changes = [];
+        const changesWrap = document.createElement('div'); changesWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+        function renderChanges() {
+          changesWrap.innerHTML = '';
+          evt.changes.forEach((ch, ci) => {
+            const chRow = document.createElement('div'); chRow.style.cssText = 'display:flex;align-items:center;gap:4px;flex-wrap:wrap;';
+            function chInp(label, val, max, onChange) {
+              const l = document.createElement('span'); l.textContent = label; l.style.cssText = 'color:#888;font-size:10px;';
+              const inp = document.createElement('input'); inp.type='number'; inp.min=0; inp.max=max; inp.value=val;
+              inp.style.cssText = 'width:46px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:2px 4px;font-family:inherit;font-size:11px;';
+              inp.addEventListener('input', () => onChange(parseInt(inp.value) || 0));
+              return [l, inp];
+            }
+            chRow.append(
+              ...chInp('Row',  ch.row,    MAP_ROWS-1, v => ch.row    = v),
+              ...chInp('Col',  ch.col,    MAP_COLS-1, v => ch.col    = v),
+              ...chInp('Tile', ch.tileId, 9999,       v => ch.tileId = v),
+            );
+            const selBtn = document.createElement('button'); selBtn.className='tbtn'; selBtn.textContent='← sel'; selBtn.style.fontSize='10px'; selBtn.title='Use selected palette tile';
+            selBtn.onclick = () => { ch.tileId = selTile; renderChanges(); };
+            const delChBtn = document.createElement('button'); delChBtn.className='tbtn danger'; delChBtn.textContent='✕'; delChBtn.style.cssText='padding:1px 4px;font-size:10px;';
+            delChBtn.onclick = () => { evt.changes.splice(ci, 1); renderChanges(); };
+            chRow.append(selBtn, delChBtn);
+            changesWrap.appendChild(chRow);
+          });
+          const addChBtn = document.createElement('button'); addChBtn.className='tbtn import-btn'; addChBtn.textContent='+ Add tile'; addChBtn.style.fontSize='10px';
+          addChBtn.onclick = () => { evt.changes.push({ row, col, tileId: selTile }); renderChanges(); };
+          changesWrap.appendChild(addChBtn);
+        }
+        renderChanges();
+        card.appendChild(changesWrap);
+      }
+
+      eventsList.appendChild(card);
+    });
+
+    // Add-event buttons
+    const addRow = document.createElement('div'); addRow.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+    [['dialog','💬 Dialog'],['cameraPan','📷 Camera Pan'],['tileChange','🔲 Tile Change']].forEach(([type, label]) => {
+      const btn = document.createElement('button'); btn.className='tbtn import-btn'; btn.style.fontSize='10px'; btn.textContent='+ ' + label;
+      btn.onclick = () => {
+        const defaults = {
+          dialog:     { type:'dialog',     lines:[] },
+          cameraPan:  { type:'cameraPan',  row, col, duration:2.0, return:true },
+          tileChange: { type:'tileChange', changes:[] },
+        };
+        events.push(defaults[type]);
+        renderEventsList();
+      };
+      addRow.appendChild(btn);
+    });
+    eventsList.appendChild(addRow);
   }
 
+  renderEventsList();
+
+  // ── Buttons ───────────────────────────────────────────────
+  const btns = document.createElement('div'); btns.className = 'modal-btns';
   if (existing) {
     const delBtn = mkb('Delete Trigger', '#3a1515', '#f88', () => {
       const idx = cur.triggers.indexOf(existing);
@@ -1470,28 +1570,23 @@ function openTriggerModal(row, col) {
     delBtn.style.marginRight = 'auto';
     btns.appendChild(delBtn);
   }
-
   btns.append(
     mkb('Cancel', '#2a2a2a', '#aaa', () => ov.remove()),
     mkb(existing ? 'Save' : 'Add Trigger', '#3a2800', '#ff9a00', () => {
-      const type       = typeSel.value;
-      const activation = actSel.value;
-      const title      = titleInp.value.trim();
-      const oneShot    = osChk.checked;
-      const lines      = dialogTA.value.split('\n').map(s => s.trim()).filter(Boolean);
-      if (!lines.length) lines.push('…');
+      if (!events.length) { toast('Add at least one event first'); return; }
+      const activation = actSel.value, title = titleInp.value.trim(), oneShot = osChk.checked;
       if (existing) {
-        existing.type = type; existing.activation = activation;
-        existing.title = title; existing.oneShot = oneShot; existing.lines = lines;
+        Object.assign(existing, { activation, title, oneShot, events });
+        delete existing.lines; delete existing.type; // drop legacy fields
       } else {
-        cur.triggers.push({ id: 'trig_' + genMapId(), row, col, type, activation, title, oneShot, lines });
+        cur.triggers.push({ id: 'trig_' + genMapId(), row, col, activation, title, oneShot, events });
       }
       ov.remove(); renderMap(); renderMapsList();
       toast(existing ? 'Trigger updated' : `Trigger added at (${row}, ${col})`);
     })
   );
 
-  box.append(h3, typeRow, actRow, titleRow, oneShotRow, dialogLbl, dialogTA, btns);
+  box.append(h3, actRow, titleRow, oneShotRow, eventsHdr, eventsList, btns);
   ov.appendChild(box); document.body.appendChild(ov);
   ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
   titleInp.focus();

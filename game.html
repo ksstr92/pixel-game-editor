@@ -992,7 +992,11 @@ function updatePlayer(dt) {
     keysHeld['KeyE']=true;
     if (activeDialog) {
       activeDialog.index++;
-      if (activeDialog.index>=activeDialog.lines.length) activeDialog=null;
+      if (activeDialog.index >= activeDialog.lines.length) {
+        const cb = activeDialog.onClose;
+        activeDialog = null;
+        cb?.();
+      }
     } else {
       let talked = false;
       for (const npc of npcs)
@@ -1068,11 +1072,101 @@ let npcs = SPAWN.friendlies.map(n => ({
 // TRIGGERS
 // ════════════════════════════════════════════════════════════════════════════
 let triggers = [];
-let firedTriggers = new Set();
+let firedTriggers  = new Set();
+let triggerQueue   = [];   // remaining events for the active trigger
+let camPan         = null; // active camera pan state
+
+// Ease-in-out curve (0→1)
+const easeInOut = t => t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+
+// ── Camera pan ────────────────────────────────────────────
+function startCamPan(evt, onDone) {
+  const worldW = MAP_COLS * TS, worldH = MAP_ROWS * TS;
+  const tx = clamp((evt.col + 0.5) * TS - VW / 2, 0, worldW - VW);
+  const ty = clamp((evt.row + 0.5) * TS - VH / 2, 0, worldH - VH);
+  camPan = {
+    startX: cam.x, startY: cam.y,
+    targetX: tx,   targetY: ty,
+    duration: evt.duration ?? 2.0, elapsed: 0,
+    doReturn: evt.return ?? true,
+    phase: 'pan', onDone,
+  };
+}
+
+function updateCamPan(dt) {
+  if (!camPan) return false;
+  const p = camPan;
+  if (p.phase === 'pan') {
+    p.elapsed += dt;
+    const t = easeInOut(Math.min(1, p.elapsed / p.duration));
+    cam.x = p.startX + (p.targetX - p.startX) * t;
+    cam.y = p.startY + (p.targetY - p.startY) * t;
+    if (p.elapsed >= p.duration) {
+      cam.x = p.targetX; cam.y = p.targetY;
+      if (p.doReturn) { p.phase = 'hold'; p.elapsed = 0; }
+      else            { camPan = null; p.onDone?.(); }
+    }
+  } else if (p.phase === 'hold') {
+    p.elapsed += dt;
+    if (p.elapsed >= 1.0) {
+      p.phase = 'return'; p.elapsed = 0;
+      p.retStartX = cam.x; p.retStartY = cam.y;
+      const worldW = MAP_COLS * TS, worldH = MAP_ROWS * TS;
+      p.retTargetX = clamp(player.x - VW/2, 0, worldW - VW);
+      p.retTargetY = clamp(player.y - VH/2, 0, worldH - VH);
+    }
+  } else { // return
+    p.elapsed += dt;
+    const t = easeInOut(Math.min(1, p.elapsed / p.duration));
+    cam.x = p.retStartX + (p.retTargetX - p.retStartX) * t;
+    cam.y = p.retStartY + (p.retTargetY - p.retStartY) * t;
+    if (p.elapsed >= p.duration) { camPan = null; p.onDone?.(); }
+  }
+  return true;
+}
+
+// ── Trigger event queue ───────────────────────────────────
+function advanceTriggerQueue() {
+  if (!triggerQueue.length) return;
+  const evt = triggerQueue.shift();
+  switch (evt.type) {
+    case 'dialog':
+      activeDialog = {
+        lines: evt.lines?.length ? evt.lines : ['…'],
+        index: 0,
+        npcName: '',
+        onClose: advanceTriggerQueue,
+      };
+      break;
+    case 'tileChange':
+      (evt.changes || []).forEach(ch => {
+        if (visualMap[ch.row]?.[ch.col] !== undefined) {
+          visualMap[ch.row][ch.col] = ch.tileId;
+          worldTileCache.delete(ch.tileId);
+          // Persist into worldData so map switches don't revert it
+          const wm = worldData?.maps?.find(m => m.id === currentWorldMapId);
+          if (wm) wm.tileMap[ch.row][ch.col] = ch.tileId;
+        }
+      });
+      advanceTriggerQueue(); // instant — continue immediately
+      break;
+    case 'cameraPan':
+      startCamPan(evt, advanceTriggerQueue);
+      break;
+    default:
+      advanceTriggerQueue();
+  }
+}
 
 function fireTrigger(trig) {
   if (trig.oneShot) firedTriggers.add(trig.id);
-  activeDialog = { lines: trig.lines ?? ['…'], index: 0, npcName: trig.title || '' };
+  // Support both new events[] format and legacy lines[] format
+  if (trig.events?.length) {
+    triggerQueue = trig.events.map(e => ({ ...e }));
+  } else {
+    triggerQueue = [{ type: 'dialog', lines: trig.lines ?? ['…'] }];
+  }
+  advanceTriggerQueue();
 }
 
 function checkWalkTriggers() {
@@ -1275,17 +1369,17 @@ function gameLoop(ts) {
     }
   }
 
-  // ── Camera: smoothly follow player, clamped to world bounds ──────────────
+  // ── Camera: pan takes priority, otherwise follow player ──────────────────
   const worldW = MAP_COLS * TS;
   const worldH = MAP_ROWS * TS;
-  const targetCamX = clamp(player.x - VW/2, 0, worldW - VW);
-  const targetCamY = clamp(player.y - VH/2, 0, worldH - VH);
-  // Smooth follow (lerp toward target)
-  cam.x += (targetCamX - cam.x) * Math.min(1, dt * 8);
-  cam.y += (targetCamY - cam.y) * Math.min(1, dt * 8);
-  // Snap if very close (prevents sub-pixel drift)
-  if (Math.abs(cam.x - targetCamX) < 0.5) cam.x = targetCamX;
-  if (Math.abs(cam.y - targetCamY) < 0.5) cam.y = targetCamY;
+  if (!updateCamPan(dt)) {
+    const targetCamX = clamp(player.x - VW/2, 0, worldW - VW);
+    const targetCamY = clamp(player.y - VH/2, 0, worldH - VH);
+    cam.x += (targetCamX - cam.x) * Math.min(1, dt * 8);
+    cam.y += (targetCamY - cam.y) * Math.min(1, dt * 8);
+    if (Math.abs(cam.x - targetCamX) < 0.5) cam.x = targetCamX;
+    if (Math.abs(cam.y - targetCamY) < 0.5) cam.y = targetCamY;
+  }
 
   if (!victoryDone && !player.dead && enemies.length > 0 && enemies.every(e=>e.dead)) {
     victoryDone=true; setTimeout(showVictoryScreen,1500);
