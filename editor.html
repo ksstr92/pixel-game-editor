@@ -414,9 +414,9 @@ select.type-sel {
 // ── Constants ─────────────────────────────────────────────
 const MAP_COLS    = 64;
 const MAP_ROWS    = 64;
-const SHEET_COLS  = 17;
-const SHEET_ROWS  = 8;
-const TOTAL_TILES = 136;   // 17 × 8
+let SHEET_COLS  = 17;
+let SHEET_ROWS  = 8;
+let TOTAL_TILES = 136;   // updated dynamically when a tileset is imported
 
 // Logical T types (matching game.html)
 const T = { WALL:0, GRASS:1, WATER:2, SWALL:3, TREE:4, PATH:5, FLOOR:6, DWALL:7 };
@@ -518,8 +518,8 @@ const DEFAULT_T = (() => {
 const _tileScratch = document.createElement('canvas');
 _tileScratch.width = _tileScratch.height = 16;
 
-// ── Individual tile images (tile_0000.png … tile_0135.png) ────────────────
-const tileImgs   = new Array(TOTAL_TILES).fill(null);
+// ── Individual tile images (populated by loadTilesFromSheet or loadAllTiles) ─
+let tileImgs   = new Array(TOTAL_TILES).fill(null);
 let   loadedCount = 0;
 
 function padId(id) {
@@ -1742,8 +1742,6 @@ function drawTile(ctx, id, dx, dy, size) {
 const PT = 20; // palette tile display size px
 const PG = 2;  // gap
 
-const PAL_W = SHEET_COLS * (PT + PG) + PG;
-
 function customTileIds() {
   // All tile IDs >= TOTAL_TILES that have been created (sorted)
   return [...new Set([...editedTiles.keys(), ...tileBaseMap.keys()])]
@@ -1752,6 +1750,7 @@ function customTileIds() {
 }
 
 function renderPalette() {
+  const PAL_W = SHEET_COLS * (PT + PG) + PG;
   const custom = customTileIds();
   const customRows = custom.length > 0
     ? Math.ceil(custom.length / SHEET_COLS) + 1   // +1 for label row
@@ -2095,20 +2094,42 @@ function renderAssetsPanel() {
   });
 }
 
-// Slice a packed 17-col × 8-row tileset image into tileImgs[], then redraw.
+// Slice a packed tileset image (any size) into 16×16 tiles and populate tileImgs[].
+// Automatically detects sheet dimensions from the image size.
 function loadTilesFromSheet(dataUrl, onDone) {
   const img = new Image();
   img.onload = () => {
+    // Detect grid dimensions from image size
+    const cols  = Math.floor(img.width  / 16);
+    const rows  = Math.floor(img.height / 16);
+    const total = cols * rows;
+
+    // Update globals so the rest of the editor (palette, type table, etc.) adapts
+    SHEET_COLS  = cols;
+    SHEET_ROWS  = rows;
+    TOTAL_TILES = total;
+
+    // Rebuild tileImgs to the new size
+    tileImgs = new Array(total).fill(null);
+
+    // Extend tintTable / typeTable if the new sheet is larger
+    while (tintTable.length < total) tintTable.push(DEFAULT_TINT);
+    while (typeTable.length < total) typeTable.push(T.WALL);
+
+    // nextCustomTileId must be above the new built-in range
+    if (nextCustomTileId < total) nextCustomTileId = total;
+
+    // Slice every tile out via an offscreen canvas
     const tmp = document.createElement('canvas');
     tmp.width = tmp.height = 16;
     const tc = tmp.getContext('2d');
     let done = 0;
-    for (let id = 0; id < TOTAL_TILES; id++) {
+    for (let id = 0; id < total; id++) {
       tc.clearRect(0, 0, 16, 16);
-      tc.drawImage(img, (id % SHEET_COLS) * 16, Math.floor(id / SHEET_COLS) * 16, 16, 16, 0, 0, 16, 16);
+      tc.drawImage(img, (id % cols) * 16, Math.floor(id / cols) * 16, 16, 16, 0, 0, 16, 16);
       const url = tmp.toDataURL();
       const ti = new Image();
-      ti.onload = ti.onerror = () => { if (++done === TOTAL_TILES) onDone?.(); };
+      ti.onload = ti.onerror = () => { if (++done === total) onDone?.(); };
       ti.src = url;
       tileImgs[id] = ti;
     }
