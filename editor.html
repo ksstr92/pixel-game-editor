@@ -572,12 +572,11 @@ let customNames = [...MT_NAMES];
 
 // ── Asset State ───────────────────────────────────────────
 // Each slot: { name: string, dataUrl: string } or null
-let assets = { tileset: null, charAtlas: null, sword: null };
+let assets = { tileset: null, charAtlas: null };
 
 const ASSET_SLOTS = [
   { key: 'tileset',   label: 'Tileset',        hint: 'Packed 16×16 monochrome tilemap sheet (tilemap_packed.png)' },
   { key: 'charAtlas', label: 'Character Atlas', hint: '16×16 sprite atlas for heroes, enemies & NPCs' },
-  { key: 'sword',     label: 'Sword Sheet',     hint: '16×16 sprite sheet for sword animations' },
 ];
 
 // ── World / Multi-Map State ───────────────────────────────
@@ -2131,7 +2130,7 @@ function loadWorldData(data) {
   if (data.customNames)  customNames      = [...data.customNames];
   if (data.nextCustomTileId) nextCustomTileId = data.nextCustomTileId;
   if (data.customTiles)  deserializeCustomTiles(data.customTiles);
-  assets = { tileset: null, charAtlas: null, sword: null, ...( data.assets || {} ) };
+  assets = { tileset: null, charAtlas: null, ...( data.assets || {} ) };
   undoStack = []; redoStack = [];
   const startId = data.currentMapId || (worldMaps[0]?.id);
   if (startId && worldMaps.find(m => m.id === startId)) switchToMap(startId);

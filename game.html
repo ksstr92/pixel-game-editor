@@ -54,8 +54,7 @@ body {
       Venture south — into the dungeon.
     </div>
     <div class="ctrl">
-      🗡 <b>WASD</b> — Move &nbsp;|&nbsp; 🖱 <b>Left Click</b> — Sword Attack<br>
-      💨 <b>Shift</b> — Roll / Dash &nbsp;|&nbsp; 💬 <b>E</b> — Talk to NPCs
+      🗡 <b>WASD</b> — Move &nbsp;|&nbsp; 💨 <b>Shift</b> — Roll / Dash &nbsp;|&nbsp; 💬 <b>E</b> — Talk to NPCs
     </div>
     <div style="margin-top:14px;">
       <button onclick="event.stopPropagation();loadWorldFile()"
@@ -99,11 +98,6 @@ const CFG = {
   dashSpeed:           420 * TILE_SCALE,   // ~1344 px/s
   dashDuration:        0.18,
   dashCooldown:        0.75,
-  atkDuration:         0.22,
-  atkCooldown:         0.40,
-  atkRange:            54  * TILE_SCALE,   // ~173 px  (≈2.7 tiles)
-  atkArc:              Math.PI * 0.88,
-  atkDamage:           35,
   heartHP:             100,
   hearts:              5,
   enemySpeed:          68  * TILE_SCALE,   // ~218 px/s
@@ -203,12 +197,6 @@ const sheet = new Image();
 let sheetReady = false;
 sheet.onload  = () => { sheetReady = true; };
 sheet.onerror = () => console.warn('Character atlas not found — using procedural graphics.');
-
-// Iron sword sprite sheet  (128×256, 8 cols × 16 rows of 16×16 frames)
-const swordSheet = new Image();
-let swordReady = false;
-swordSheet.onload  = () => { swordReady = true; };
-swordSheet.onerror = () => console.warn('Sword sprite not found — using line art.');
 
 // ── Monochrome tileset — loaded from world.json assets ────────────────────────
 // 17 cols × 8 rows of 16×16px tiles, no gap (packed).
@@ -620,7 +608,7 @@ const _sprBuf = document.createElement('canvas');
 _sprBuf.width = _sprBuf.height = TS;
 const _sprCtx = _sprBuf.getContext('2d');
 
-function drawKnight(x,y,atkAngle,atkTimer,dashActive,facingRight,animState='idle') {
+function drawKnight(x,y,dashActive,facingRight,animState='idle') {
   const dx  = Math.round(x - cam.x - TS/2);
   const mv  = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD'];
   const bob = Math.round(mv ? Math.sin(Date.now()*0.009) * (TS * 0.05) : 0);
@@ -851,100 +839,6 @@ function drawEnemyHP(x,y,hp,maxHP) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SWORD SLASH  — sprite-based swing with ghost trails
-// ════════════════════════════════════════════════════════════════════════════
-function drawSwordArc(x, y, atkAngle, progress) {
-  const sx = x - cam.x, sy = y - cam.y + TS * 0.5;  // aligned to visual feet
-  const half   = CFG.atkArc / 2;
-  const aStart = atkAngle - half;
-  // Blade and hilt lengths scale with tile size
-  const BLADE  = TS * 2.3;    // ~147 px at TS=64  (≈2.3 tiles reach)
-  const HILT   = TS * 0.45;   // ~29 px at TS=64
-
-  // Fast snap ease-out
-  const swingT = 1 - Math.pow(1 - Math.min(progress / 0.68, 1), 2.6);
-  const curA   = aStart + CFG.atkArc * swingT;
-
-  // Global fade-out in the latter third of the animation
-  const alpha  = progress < 0.55 ? 1 : Math.max(0, 1 - (progress - 0.55) * 2.2);
-
-  ctx.save();
-  ctx.translate(sx, sy);
-  ctx.globalAlpha = alpha;
-
-  // ── Ghost trails (5 fading lines sweeping back) ──────────────────────────
-  for (let i = 4; i >= 0; i--) {
-    const tT  = Math.max(0, swingT - (i + 1) * 0.13);
-    const tA  = aStart + CFG.atkArc * tT;
-    const fa  = (1 - i / 5) * 0.45;
-    const len = BLADE * (1 - i * 0.04);
-    ctx.strokeStyle = `rgba(160, 210, 255, ${fa})`;
-    ctx.lineWidth   = Math.max(1, (3.5 - i * 0.45) * (TS / 20));
-    ctx.lineCap     = 'round';
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(tA) * HILT, Math.sin(tA) * HILT);
-    ctx.lineTo(Math.cos(tA) * len,  Math.sin(tA) * len);
-    ctx.stroke();
-  }
-
-  // ── Main blade — sword sprite or bright line ──────────────────────────────
-  if (swordReady) {
-    // Draw sword sprite stretched along the blade, rotated to current swing angle
-    ctx.save();
-    ctx.rotate(curA);
-    const bladeLen = BLADE - HILT;
-    const bladeH   = TS * 0.22;          // visual thickness
-    // Source: row 4 (y=64), col 0 (x=0) — full sword frame
-    ctx.drawImage(swordSheet, 0, 64, 16, 16, HILT, -bladeH / 2, bladeLen, bladeH);
-    ctx.restore();
-  } else {
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.96)';
-    ctx.lineWidth   = 3 * (TS / 20);
-    ctx.lineCap     = 'round';
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(curA) * HILT,  Math.sin(curA) * HILT);
-    ctx.lineTo(Math.cos(curA) * BLADE, Math.sin(curA) * BLADE);
-    ctx.stroke();
-  }
-
-  // ── Edge highlight ───────────────────────────────────────────────────────
-  const eA = curA + 0.055;
-  ctx.strokeStyle = 'rgba(140, 190, 255, 0.55)';
-  ctx.lineWidth   = 1.5 * (TS / 20);
-  ctx.lineCap     = 'round';
-  ctx.beginPath();
-  ctx.moveTo(Math.cos(eA) * HILT,  Math.sin(eA) * HILT);
-  ctx.lineTo(Math.cos(eA) * BLADE, Math.sin(eA) * BLADE);
-  ctx.stroke();
-
-  // ── Cross-guard glint at hilt ────────────────────────────────────────────
-  const gA = curA + Math.PI / 2;
-  const gLen = 6 * (TS / 20);
-  ctx.strokeStyle = `rgba(220, 190, 80, ${Math.max(0, 0.9 - progress * 1.2)})`;
-  ctx.lineWidth   = 2.5 * (TS / 20);
-  ctx.beginPath();
-  ctx.moveTo(Math.cos(curA)*HILT + Math.cos(gA)*gLen, Math.sin(curA)*HILT + Math.sin(gA)*gLen);
-  ctx.lineTo(Math.cos(curA)*HILT - Math.cos(gA)*gLen, Math.sin(curA)*HILT - Math.sin(gA)*gLen);
-  ctx.stroke();
-
-  // ── Tip flash ────────────────────────────────────────────────────────────
-  if (progress < 0.38) {
-    const tipX = Math.cos(curA) * BLADE;
-    const tipY = Math.sin(curA) * BLADE;
-    const fa   = (1 - progress / 0.38) * 0.88;
-    const gr   = TS * 0.55;
-    const g    = ctx.createRadialGradient(tipX, tipY, 0, tipX, tipY, gr);
-    g.addColorStop(0, `rgba(255, 255, 210, ${fa})`);
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(tipX, tipY, gr, 0, Math.PI * 2); ctx.fill();
-  }
-
-  ctx.globalAlpha = 1;
-  ctx.restore();
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // DUNGEON FOG
 // ════════════════════════════════════════════════════════════════════════════
 function drawDungeonFog() {
@@ -1034,9 +928,7 @@ function drawHUD() {
     hudCtx.fillStyle='#ccc'; hudCtx.font=`${hF(7)}px monospace`; hudCtx.fillText(label,x+4,y+h-2);
   };
   const dp = player.dashCooldown<=0 ? 1 : 1-(player.dashCooldown/CFG.dashCooldown);
-  const ap = player.atkCooldown<=0  ? 1 : 1-(player.atkCooldown/CFG.atkCooldown);
-  drawBar(14*hs, by,       108*hs, 11*hs, dp, dp<1?'#224488':'#4488ff','#5599dd','DASH '+(dp>=1?'READY':'...'));
-  drawBar(14*hs, by+13*hs, 108*hs, 11*hs, ap, ap<1?'#665520':'#ffcc44','#ccaa44','ATK  '+(ap>=1?'READY':'...'));
+  drawBar(14*hs, by, 108*hs, 11*hs, dp, dp<1?'#224488':'#4488ff','#5599dd','DASH '+(dp>=1?'READY':'...'));
 
 }
 
@@ -1048,49 +940,17 @@ const player = {
   y: SPAWN.player.row*TS + TS/2,
   radius: Math.round(TS * 0.52),   // ~33 px — scales with tile size
   hp: CFG.hearts*CFG.heartHP, maxHP: CFG.hearts*CFG.heartHP,
-  atkTimer:0, atkCooldown:0, atkAngle:0,
   dashTimer:0, dashCooldown:0, dashVx:0, dashVy:0,
   hurtTimer:0, invincTimer:0,
   facingRight:true, dead:false, kills:0,
 };
 
-function doAttack() {
-  player.atkTimer    = CFG.atkDuration;
-  player.atkCooldown = CFG.atkCooldown;
-  player.atkAngle    = ang(player.x, player.y, mouse.wx, mouse.wy);
-  player.facingRight = mouse.wx > player.x;
-  for (const e of enemies) {
-    if (e.dead) continue;
-    const d = dist(player.x,player.y,e.x,e.y);
-    if (d > CFG.atkRange+e.radius) continue;
-    const a = ang(player.x,player.y,e.x,e.y);
-    if (Math.abs(normAngle(a-player.atkAngle)) > CFG.atkArc/2) continue;
-    e.hp -= CFG.atkDamage;
-    spawnSparks(e.x,e.y,player.atkAngle);
-    spawnBlood(e.x,e.y,player.atkAngle);
-    spawnFloat(e.x, e.y - 16*TILE_SCALE, `-${CFG.atkDamage}`, '#ffdd44');
-    const ka=ang(player.x,player.y,e.x,e.y);
-    e.vx=Math.cos(ka)*CFG.enemyKnockback; e.vy=Math.sin(ka)*CFG.enemyKnockback;
-    e.hurtTimer=0.25;
-    if (e.hp<=0) {
-      e.dead=true; e.deathTimer=0.6;
-      player.kills++;
-      spawnParticles(e.x,e.y,'#cc1111',18,100*TILE_SCALE,0.85);
-      spawnFloat(e.x, e.y - 22*TILE_SCALE, 'SLAIN!', '#ff4444');
-    }
-  }
-}
-
 function updatePlayer(dt) {
   if (player.dead) return;
-  player.atkTimer    = Math.max(0,player.atkTimer-dt);
-  player.atkCooldown = Math.max(0,player.atkCooldown-dt);
   player.dashTimer   = Math.max(0,player.dashTimer-dt);
   player.dashCooldown= Math.max(0,player.dashCooldown-dt);
   player.hurtTimer   = Math.max(0,player.hurtTimer-dt);
   player.invincTimer = Math.max(0,player.invincTimer-dt);
-
-  if (mouse.justDown && player.atkCooldown<=0 && player.dashTimer<=0) doAttack();
 
   const shiftDown = keys['ShiftLeft'] || keys['ShiftRight'];
   if (shiftDown && !keysHeld['Shift']) {
@@ -1342,9 +1202,8 @@ function loadWorldFile() {
         worldData = data;
         worldTileCache.clear();
         // Load bundled sprite assets from world.json
-        if (data.assets?.tileset?.dataUrl)   { monoReady = false;  monoSheet.src  = data.assets.tileset.dataUrl; }
-        if (data.assets?.charAtlas?.dataUrl) { sheetReady = false; sheet.src      = data.assets.charAtlas.dataUrl; }
-        if (data.assets?.sword?.dataUrl)     { swordReady = false; swordSheet.src = data.assets.sword.dataUrl; }
+        if (data.assets?.tileset?.dataUrl)   { monoReady = false;  monoSheet.src = data.assets.tileset.dataUrl; }
+        if (data.assets?.charAtlas?.dataUrl) { sheetReady = false; sheet.src     = data.assets.charAtlas.dataUrl; }
         const startId = data.currentMapId || data.maps[0].id;
         const startMap = data.maps.find(m => m.id === startId) || data.maps[0];
         // Use the map's saved spawn point (activateWorldMap falls back to center)
@@ -1464,20 +1323,15 @@ function gameLoop(ts) {
     if (!e.dead) drawEnemyHP(e.x,e.y,e.hp,e.maxHP);
   });
 
-  // Sword arc
-  if (player.atkTimer>0)
-    drawSwordArc(player.x, player.y, player.atkAngle, 1-player.atkTimer/CFG.atkDuration);
-
   // Player
   const moving = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD'];
   const pAnim  = player.dead           ? 'death'  :
                  player.hurtTimer > 0  ? 'hurt'   :
                  player.dashTimer > 0  ? 'dash'   :
-                 player.atkTimer  > 0  ? 'attack' :
                  moving                ? 'walk'   : 'idle';
   if (!player.dead) {
     ctx.globalAlpha = player.invincTimer>0 ? 0.4+0.6*Math.abs(Math.sin(player.invincTimer*22)) : 1;
-    drawKnight(player.x,player.y,player.atkAngle,player.atkTimer,player.dashTimer>0,player.facingRight,pAnim);
+    drawKnight(player.x,player.y,player.dashTimer>0,player.facingRight,pAnim);
     ctx.globalAlpha=1;
   }
 
