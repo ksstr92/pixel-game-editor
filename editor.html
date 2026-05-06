@@ -303,6 +303,7 @@ select.type-sel {
       <div class="stab active" id="tab-palette" onclick="switchTab('palette')">Palette</div>
       <div class="stab" id="tab-maps"    onclick="switchTab('maps')">Maps</div>
       <div class="stab" id="tab-editor"  onclick="switchTab('editor')">Tile Ed.</div>
+      <div class="stab" id="tab-assets"  onclick="switchTab('assets')">Assets</div>
       <div class="stab" id="tab-help"    onclick="switchTab('help')">Help</div>
     </div>
 
@@ -330,6 +331,8 @@ select.type-sel {
         </div>
         <div id="maps-list"></div>
       </div>
+
+      <div id="assets-panel" style="display:none;padding:8px;"></div>
 
       <div id="help-content" style="display:none;padding:4px;color:#777;line-height:1.9;font-size:11px;">
         <p style="color:#9ce;margin-bottom:4px;font-size:12px;">Tools</p>
@@ -566,6 +569,16 @@ let lastCell   = { r:-1, c:-1 };
 let undoStack = [], redoStack = [];
 // User-editable tile names (persisted in localStorage separately from tints)
 let customNames = [...MT_NAMES];
+
+// ── Asset State ───────────────────────────────────────────
+// Each slot: { name: string, dataUrl: string } or null
+let assets = { tileset: null, charAtlas: null, sword: null };
+
+const ASSET_SLOTS = [
+  { key: 'tileset',   label: 'Tileset',        hint: 'Packed 16×16 monochrome tilemap sheet (tilemap_packed.png)' },
+  { key: 'charAtlas', label: 'Character Atlas', hint: '16×16 sprite atlas for heroes, enemies & NPCs' },
+  { key: 'sword',     label: 'Sword Sheet',     hint: '16×16 sprite sheet for sword animations' },
+];
 
 // ── World / Multi-Map State ───────────────────────────────
 let worldMaps     = [];   // [{ id, name, cols, rows, tileMap }]
@@ -1918,16 +1931,110 @@ function setZoom(z, pivotX, pivotY) {
 }
 
 // ── Tab ────────────────────────────────────────────────────
+// ── Assets Panel ──────────────────────────────────────────
+function renderAssetsPanel() {
+  const panel = document.getElementById('assets-panel');
+  panel.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;';
+  hdr.textContent = 'Game Sprite Assets';
+  panel.appendChild(hdr);
+
+  const note = document.createElement('div');
+  note.style.cssText = 'color:#444;font-size:10px;margin-bottom:10px;line-height:1.6;';
+  note.textContent = 'Assets are bundled into world.json. Without them the game uses procedural fallback graphics.';
+  panel.appendChild(note);
+
+  ASSET_SLOTS.forEach(({ key, label, hint }) => {
+    const slot = assets[key];
+    const row  = document.createElement('div');
+    row.style.cssText = 'background:#1e1e1e;border:1px solid #2a2a2a;border-radius:3px;padding:8px;margin-bottom:8px;';
+
+    // Status + label
+    const topRow = document.createElement('div');
+    topRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+    const dot = document.createElement('span');
+    dot.textContent = slot ? '✓' : '○';
+    dot.style.cssText = `font-size:13px;color:${slot ? '#5c9' : '#444'};flex-shrink:0;`;
+    const lbl = document.createElement('span');
+    lbl.textContent = label;
+    lbl.style.cssText = `flex:1;color:${slot ? '#bbb' : '#666'};`;
+    topRow.append(dot, lbl);
+    row.appendChild(topRow);
+
+    // Filename
+    if (slot?.name) {
+      const fname = document.createElement('div');
+      fname.textContent = slot.name;
+      fname.style.cssText = 'color:#4a8a6a;font-size:10px;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      row.appendChild(fname);
+    }
+
+    // Thumbnail
+    if (slot?.dataUrl) {
+      const thumb = document.createElement('img');
+      thumb.src = slot.dataUrl;
+      thumb.style.cssText = 'width:100%;max-height:56px;object-fit:contain;image-rendering:pixelated;background:#0a0a0a;border:1px solid #2a2a2a;display:block;margin-bottom:5px;';
+      row.appendChild(thumb);
+    }
+
+    // Hint
+    const hintEl = document.createElement('div');
+    hintEl.textContent = hint;
+    hintEl.style.cssText = 'color:#3a3a3a;font-size:10px;margin-bottom:6px;';
+    row.appendChild(hintEl);
+
+    // Buttons
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:4px;';
+    const browseBtn = document.createElement('button');
+    browseBtn.className = 'tbtn import-btn';
+    browseBtn.textContent = slot ? '↺ Replace' : '📂 Browse';
+    browseBtn.style.flex = '1';
+    browseBtn.onclick = () => importAsset(key);
+    btnRow.appendChild(browseBtn);
+    if (slot) {
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'tbtn danger';
+      clearBtn.textContent = '✕ Remove';
+      clearBtn.onclick = () => { assets[key] = null; renderAssetsPanel(); toast(`${label} removed`); };
+      btnRow.appendChild(clearBtn);
+    }
+    row.appendChild(btnRow);
+    panel.appendChild(row);
+  });
+}
+
+function importAsset(key) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      assets[key] = { name: file.name, dataUrl: ev.target.result };
+      renderAssetsPanel();
+      const slot = ASSET_SLOTS.find(s => s.key === key);
+      toast(`${slot.label}: "${file.name}" loaded`);
+    };
+    reader.readAsDataURL(file);
+  };
+  inp.click();
+}
+
 function switchTab(tab) {
   document.getElementById('palette-canvas').style.display = tab === 'palette' ? 'block' : 'none';
   document.getElementById('maps-panel'   ).style.display  = tab === 'maps'    ? 'block' : 'none';
   document.getElementById('editor-panel' ).style.display  = tab === 'editor'  ? 'block' : 'none';
+  document.getElementById('assets-panel' ).style.display  = tab === 'assets'  ? 'block' : 'none';
   document.getElementById('help-content' ).style.display  = tab === 'help'    ? 'block' : 'none';
-  ['palette','maps','editor','help'].forEach(t =>
+  ['palette','maps','editor','assets','help'].forEach(t =>
     document.getElementById('tab-' + t).classList.toggle('active', t === tab)
   );
   if (tab === 'editor' && editingTileId < 0) startEditTile(selTile);
-  if (tab === 'maps') renderMapsList();
+  if (tab === 'maps')   renderMapsList();
+  if (tab === 'assets') renderAssetsPanel();
 }
 
 // ── Export ─────────────────────────────────────────────────
@@ -2003,7 +2110,8 @@ function saveFile() {
     typeTable,
     customNames,
     nextCustomTileId,
-    customTiles: serializeCustomTiles()
+    customTiles: serializeCustomTiles(),
+    assets,
   };
   const blob = new Blob([JSON.stringify(data)], { type:'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -2023,6 +2131,7 @@ function loadWorldData(data) {
   if (data.customNames)  customNames      = [...data.customNames];
   if (data.nextCustomTileId) nextCustomTileId = data.nextCustomTileId;
   if (data.customTiles)  deserializeCustomTiles(data.customTiles);
+  assets = { tileset: null, charAtlas: null, sword: null, ...( data.assets || {} ) };
   undoStack = []; redoStack = [];
   const startId = data.currentMapId || (worldMaps[0]?.id);
   if (startId && worldMaps.find(m => m.id === startId)) switchToMap(startId);
@@ -2408,7 +2517,7 @@ function autosave() {
     const data = {
       version: 3, currentMapId, maps: worldMaps,
       tintTable, typeTable, customNames, nextCustomTileId,
-      customTiles: serializeCustomTiles()
+      customTiles: serializeCustomTiles(), assets,
     };
     localStorage.setItem('editor_world', JSON.stringify(data));
     // Clean up legacy keys

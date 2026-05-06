@@ -198,27 +198,25 @@ const SP = {
   merchant: {x:96,  y:240, w:16,h:16},
 };
 
+// Sprite assets — loaded from world.json (see Assets panel in editor)
 const sheet = new Image();
 let sheetReady = false;
 sheet.onload  = () => { sheetReady = true; };
-sheet.onerror = () => console.warn('Sprite atlas not found — using procedural graphics.');
-sheet.src = '0x72_16x16DungeonTileset.v5.png';
+sheet.onerror = () => console.warn('Character atlas not found — using procedural graphics.');
 
 // Iron sword sprite sheet  (128×256, 8 cols × 16 rows of 16×16 frames)
 const swordSheet = new Image();
 let swordReady = false;
 swordSheet.onload  = () => { swordReady = true; };
 swordSheet.onerror = () => console.warn('Sword sprite not found — using line art.');
-swordSheet.src = 'sword_iron_all_sheet.png';
 
-// ── Monochrome tileset  (asset/Monochrome/Tilemap/tilemap_packed.png) ────────
+// ── Monochrome tileset — loaded from world.json assets ────────────────────────
 // 17 cols × 8 rows of 16×16px tiles, no gap (packed).
 // Source coord: x=(id%17)*16, y=floor(id/17)*16
 const monoSheet = new Image();
 let monoReady = false;
 monoSheet.onload  = () => { monoReady = true; };
 monoSheet.onerror = () => console.warn('Monochrome tileset not found.');
-monoSheet.src = 'asset/Monochrome/Tilemap/tilemap_packed.png';
 
 // Tile IDs from the Monochrome sheet (row×17 + col):
 const MT = {
@@ -1343,6 +1341,10 @@ function loadWorldFile() {
           throw new Error('Not a valid world.json (need version 3)');
         worldData = data;
         worldTileCache.clear();
+        // Load bundled sprite assets from world.json
+        if (data.assets?.tileset?.dataUrl)   { monoReady = false;  monoSheet.src  = data.assets.tileset.dataUrl; }
+        if (data.assets?.charAtlas?.dataUrl) { sheetReady = false; sheet.src      = data.assets.charAtlas.dataUrl; }
+        if (data.assets?.sword?.dataUrl)     { swordReady = false; swordSheet.src = data.assets.sword.dataUrl; }
         const startId = data.currentMapId || data.maps[0].id;
         const startMap = data.maps.find(m => m.id === startId) || data.maps[0];
         // Use the map's saved spawn point (activateWorldMap falls back to center)
