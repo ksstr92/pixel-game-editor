@@ -371,11 +371,11 @@ select.type-sel {
 <div id="toolbar">
   <span class="title">MAP EDITOR</span>
   <div class="sep"></div>
-  <button class="tbtn active" id="btn-paint" title="Paint [B]">✏ Paint</button>
-  <button class="tbtn" id="btn-erase" title="Erase [E]">✕ Erase</button>
-  <button class="tbtn" id="btn-fill"  title="Flood Fill [F]">⬛ Fill</button>
-  <button class="tbtn" id="btn-pick"  title="Pick Tile [P]">🎯 Pick</button>
-  <button class="tbtn" id="btn-exit"    title="Place/remove waypoint [X]">🚪 Waypoint</button>
+  <button class="tbtn active" id="btn-paint" title="Brush [B]">🖌 Brush</button>
+  <button class="tbtn" id="btn-erase" title="Eraser [E]">🧹 Eraser</button>
+  <button class="tbtn" id="btn-fill"  title="Bucket fill [F]">🪣 Bucket</button>
+  <button class="tbtn" id="btn-pick"  title="Eyedropper [P]">🔍 Eyedropper</button>
+  <button class="tbtn" id="btn-exit"    title="Place/remove waypoint [X]" style="display:none">🚪 Waypoint</button>
   <button class="tbtn" id="btn-spawn"   title="Set player spawn [S]" style="display:none">⚑ Spawn</button>
   <button class="tbtn" id="btn-npc"     title="Place NPC [N]"        style="display:none">👤 NPC</button>
   <button class="tbtn" id="btn-trigger" title="Place Trigger [T]">⚡ Trigger</button>
@@ -391,11 +391,12 @@ select.type-sel {
   <div class="sep"></div>
   <button class="tbtn active" id="btn-grid" title="Toggle Grid [G]">▦ Grid</button>
   <div class="sep"></div>
+  <button class="tbtn" id="btn-preview" title="Preview in game" style="color:#8f8;border-color:#3a7a3a;">▶ Preview</button>
+  <div class="sep"></div>
   <button class="tbtn import-btn" id="btn-import">⬇ Import</button>
   <button class="tbtn" id="btn-save">💾 Save</button>
   <button class="tbtn" id="btn-load-file">📂 Load</button>
-  <div class="sep"></div>
-  <button class="tbtn danger" id="btn-clear">🗑 Clear</button>
+  <button class="tbtn danger" id="btn-clear" style="display:none">🗑 Clear</button>
   <button class="tbtn" id="btn-help" title="Help / Keyboard shortcuts">?</button>
 </div>
 
@@ -2736,6 +2737,18 @@ document.getElementById('btn-grid' ).onclick=()=>{
   showGrid=!showGrid;
   document.getElementById('btn-grid').classList.toggle('active',showGrid);
   renderMap();
+};
+document.getElementById('btn-preview').onclick = () => {
+  flushCurrentMap();
+  const data = {
+    version: 3, currentMapId, maps: worldMaps,
+    tintTable, typeTable, customNames, nextCustomTileId,
+    customTiles: serializeCustomTiles(), assets,
+  };
+  try {
+    localStorage.setItem('preview_world', JSON.stringify(data));
+    window.open('game.html', '_blank');
+  } catch(e) { alert('Preview failed (world may be too large for localStorage): ' + e.message); }
 };
 document.getElementById('btn-import'   ).onclick=importModal;
 document.getElementById('btn-save'     ).onclick=saveFile;

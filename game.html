@@ -1308,6 +1308,18 @@ function checkMapExits() {
   }
 }
 
+function applyWorldData(data) {
+  if (data.version !== 3 || !Array.isArray(data.maps) || !data.maps.length)
+    throw new Error('Not a valid world file (need version 3)');
+  worldData = data;
+  worldTileCache.clear();
+  if (data.assets?.tileset?.dataUrl)   { monoReady = false;  monoSheet.src = data.assets.tileset.dataUrl; }
+  if (data.assets?.charAtlas?.dataUrl) { sheetReady = false; sheet.src     = data.assets.charAtlas.dataUrl; }
+  const startId  = data.currentMapId || data.maps[0].id;
+  const startMap = data.maps.find(m => m.id === startId) || data.maps[0];
+  activateWorldMap(startMap.id);
+}
+
 function loadWorldFile() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.json';
@@ -1316,19 +1328,8 @@ function loadWorldFile() {
     const reader = new FileReader();
     reader.onload = ev => {
       try {
-        const data = JSON.parse(ev.target.result);
-        if (data.version !== 3 || !Array.isArray(data.maps) || !data.maps.length)
-          throw new Error('Not a valid world.json (need version 3)');
-        worldData = data;
-        worldTileCache.clear();
-        // Load bundled sprite assets from world.json
-        if (data.assets?.tileset?.dataUrl)   { monoReady = false;  monoSheet.src = data.assets.tileset.dataUrl; }
-        if (data.assets?.charAtlas?.dataUrl) { sheetReady = false; sheet.src     = data.assets.charAtlas.dataUrl; }
-        const startId = data.currentMapId || data.maps[0].id;
-        const startMap = data.maps.find(m => m.id === startId) || data.maps[0];
-        // Use the map's saved spawn point (activateWorldMap falls back to center)
-        activateWorldMap(startMap.id);
-        console.log('World loaded:', data.maps.length, 'maps');
+        applyWorldData(JSON.parse(ev.target.result));
+        console.log('World loaded:', worldData.maps.length, 'maps');
       } catch(err) { alert('World load error: ' + err.message); }
     };
     reader.readAsText(file);
@@ -1477,6 +1478,21 @@ function gameLoop(ts) {
 // INIT
 // ════════════════════════════════════════════════════════════════════════════
 gameMap = buildMap();
+
+// ── Preview mode: auto-load world from editor and jump straight into game ──
+(function checkPreview() {
+  try {
+    const raw = localStorage.getItem('preview_world');
+    if (!raw) return;
+    localStorage.removeItem('preview_world'); // consume once
+    const data = JSON.parse(raw);
+    applyWorldData(data);
+    // Hide the title overlay and start immediately
+    document.getElementById('overlay').style.display = 'none';
+    gameStarted = true;
+    requestAnimationFrame(gameLoop);
+  } catch(e) { console.warn('Preview load failed:', e); }
+})();
 </script>
 </body>
 </html>
