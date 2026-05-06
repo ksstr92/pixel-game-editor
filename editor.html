@@ -2032,6 +2032,22 @@ function paint(r, c) {
   if (old === nw) return;
   pushUndo([{ r, c, old, nw, layer: onOverlay ? 'overlay' : 'base' }]);
   map[r][c] = nw;
+
+  // Erase also removes any entities placed on this cell
+  if (tool === 'erase') {
+    const cur = worldMaps.find(m => m.id === currentMapId);
+    if (cur) {
+      const prevN = cur.npcs?.length ?? 0;
+      const prevE = cur.exits?.length ?? 0;
+      const prevT = cur.triggers?.length ?? 0;
+      cur.npcs     = (cur.npcs     || []).filter(n => !(+n.row === r && +n.col === c));
+      cur.exits    = (cur.exits    || []).filter(e => !(e.fromRow === r && e.fromCol === c));
+      cur.triggers = (cur.triggers || []).filter(t => !(+t.row === r && +t.col === c));
+      if (prevN !== cur.npcs.length || prevE !== cur.exits.length || prevT !== cur.triggers.length)
+        renderMapsList();
+    }
+  }
+
   markMinimapDirty();
   renderMap();
 }
