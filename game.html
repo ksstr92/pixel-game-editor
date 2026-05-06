@@ -766,13 +766,12 @@ function drawGoblin(x,y,facingRight,animState='idle',deathP=0) {
 // ── NPC ───────────────────────────────────────────────────────────────────────
 function drawNPC(x,y,npc) {
   const sx=x-cam.x, sy=y-cam.y;
-  const now=Date.now(), bob=Math.sin(now*0.0018)*1.2;
   const near = dist(player.x,player.y,x,y) < 44 * TILE_SCALE;
 
   // ── Monochrome tileId path (world-map NPCs) ────────────
   if (npc.tileId >= 0 && monoReady) {
     const dx = Math.round(x - cam.x - TS/2);
-    const dy = Math.round(y - cam.y - TS/2) + Math.round(Math.sin(now*0.0018)*(TS*0.03));
+    const dy = Math.round(y - cam.y - TS/2);
     // Background-sample composite (same as drawKnight — no colored rect)
     _sprCtx.clearRect(0, 0, TS, TS);
     _sprCtx.drawImage(ctx.canvas, dx, dy, TS, TS, 0, 0, TS, TS);
@@ -804,48 +803,43 @@ function drawNPC(x,y,npc) {
     ctx.fillStyle='#ffcc44'; ctx.beginPath(); ctx.arc(13,-24,6,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='#ffe888'; ctx.beginPath(); ctx.arc(13,-24,3,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='rgba(150,180,255,0.45)'; ctx.beginPath(); ctx.arc(13,-24,7,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#ddc090'; ctx.beginPath(); ctx.arc(0,-17+bob,8,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ddc090'; ctx.beginPath(); ctx.arc(0,-17,8,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='#fff';
-    ctx.beginPath(); ctx.moveTo(-6,-13+bob); ctx.lineTo(-8,3+bob); ctx.lineTo(0,1+bob); ctx.lineTo(8,3+bob); ctx.lineTo(6,-13+bob); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-6,-13); ctx.lineTo(-8,3+bob); ctx.lineTo(0,1+bob); ctx.lineTo(8,3+bob); ctx.lineTo(6,-13); ctx.fill();
     ctx.fillStyle='#6688cc';
-    ctx.beginPath(); ctx.arc(-3,-19+bob,1.5,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(3,-19+bob,1.5,0,Math.PI*2);  ctx.fill();
-    ctx.fillStyle='#112277'; ctx.fillRect(-11,-27+bob,22,4);
-    ctx.beginPath(); ctx.moveTo(-7,-27+bob); ctx.lineTo(7,-27+bob); ctx.lineTo(3,-42+bob); ctx.lineTo(-3,-42+bob); ctx.fill();
-    ctx.fillStyle='#ffcc44'; ctx.beginPath(); ctx.arc(0,-41+bob,2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-3,-19,1.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(3,-19,1.5,0,Math.PI*2);  ctx.fill();
+    ctx.fillStyle='#112277'; ctx.fillRect(-11,-27,22,4);
+    ctx.beginPath(); ctx.moveTo(-7,-27); ctx.lineTo(7,-27); ctx.lineTo(3,-42); ctx.lineTo(-3,-42); ctx.fill();
+    ctx.fillStyle='#ffcc44'; ctx.beginPath(); ctx.arc(0,-41,2,0,Math.PI*2); ctx.fill();
   } else {
     ctx.fillStyle='#cc8030'; ctx.fillRect(-8,-10,16,22);
     ctx.fillStyle='#7a5020'; ctx.fillRect(-7,-9,14,18);
     ctx.fillStyle='#aa6828'; ctx.fillRect(-6,-6,12,12);
-    ctx.fillStyle='#ddc090'; ctx.beginPath(); ctx.arc(0,-17+bob,8,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#cc3030'; ctx.fillRect(-7,-24+bob,14,6);
+    ctx.fillStyle='#ddc090'; ctx.beginPath(); ctx.arc(0,-17,8,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#cc3030'; ctx.fillRect(-7,-24,14,6);
     ctx.fillStyle='#6688cc';
-    ctx.beginPath(); ctx.arc(-3,-19+bob,1.5,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(3,-19+bob,1.5,0,Math.PI*2);  ctx.fill();
-    ctx.fillStyle='#cc2222'; ctx.fillRect(-10,-27+bob,20,4);
-    ctx.beginPath(); ctx.moveTo(-6,-27+bob); ctx.lineTo(6,-27+bob); ctx.lineTo(3,-38+bob); ctx.lineTo(-3,-38+bob); ctx.fill();
+    ctx.beginPath(); ctx.arc(-3,-19,1.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(3,-19,1.5,0,Math.PI*2);  ctx.fill();
+    ctx.fillStyle='#cc2222'; ctx.fillRect(-10,-27,20,4);
+    ctx.beginPath(); ctx.moveTo(-6,-27); ctx.lineTo(6,-27); ctx.lineTo(3,-38); ctx.lineTo(-3,-38); ctx.fill();
     ctx.fillStyle='#ffdd44';
-    ctx.beginPath(); ctx.moveTo(9,-27+bob); ctx.quadraticCurveTo(16,-33+bob,13,-42+bob); ctx.quadraticCurveTo(10,-35+bob,9,-29+bob); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(9,-27); ctx.quadraticCurveTo(16,-33+bob,13,-42); ctx.quadraticCurveTo(10,-35+bob,9,-29+bob); ctx.fill();
   }
   ctx.restore();
   }
 
-  // Name plate on HUD
-  const hs  = hudScale;
-  const hsx = hX(x - cam.x), hsy = hY(y - cam.y + TS * 0.5);
-  const npy = hsy - 30 * hs;
-  hudCtx.fillStyle = 'rgba(0,0,0,0.65)';
-  hudCtx.fillRect(hsx - 28*hs, npy - 14*hs, 56*hs, 13*hs);
-  hudCtx.fillStyle = '#ffe888';
-  hudCtx.font = `bold ${hF(10)}px Georgia`;
-  hudCtx.textAlign = 'center';
-  hudCtx.fillText(npc.name, hsx, npy - 4*hs);
+  // [E] Talk prompt (no name label)
   if (near) {
+    const hs  = hudScale;
+    const hsx = hX(x - cam.x);
+    const hsy = hY(y - cam.y - TS * 0.6);
     hudCtx.fillStyle = '#aaffaa';
     hudCtx.font = `${hF(9)}px Georgia`;
-    hudCtx.fillText('[E] Talk', hsx, npy - 18*hs);
+    hudCtx.textAlign = 'center';
+    hudCtx.fillText('[E] Talk', hsx, hsy);
+    hudCtx.textAlign = 'left';
   }
-  hudCtx.textAlign = 'left';
 }
 
 function drawEnemyHP(x,y,hp,maxHP) {
