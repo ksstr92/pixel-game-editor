@@ -628,9 +628,7 @@ const _sprCtx = _sprBuf.getContext('2d');
 
 function drawKnight(x,y,facingRight,animState='idle') {
   const dx  = Math.round(x - cam.x - TS/2);
-  const mv  = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD'];
-  const bob = Math.round(mv ? Math.sin(Date.now()*0.009) * (TS * 0.05) : 0);
-  const dy  = Math.round(y - cam.y - TS/2) + bob;
+  const dy  = Math.round(y - cam.y - TS/2);
 
   if (!monoReady) {
     // Fallback before sheet loads
