@@ -201,8 +201,45 @@ select.type-sel {
 #loading-bar-wrap { width: 300px; height: 8px; background: #222; border-radius: 4px; overflow: hidden; }
 #loading-bar { height: 100%; background: #4b6271; border-radius: 4px; width: 0; transition: width 0.1s; }
 
-/* Tile Editor */
-#editor-panel { padding: 8px; display: none; overflow-y: auto; }
+/* Tile Editor popup */
+#tile-editor-overlay { display: none; }
+#tile-editor-box {
+  background: #1c1c1c;
+  border: 1px solid #3a3a3a;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 380px;
+}
+#tile-editor-box h3 { color: #9ce; margin: 0 0 4px; }
+#editor-panel { padding: 0; display: block; }
+
+/* Help popup */
+#help-overlay { display: none; }
+#help-box {
+  background: #1c1c1c;
+  border: 1px solid #3a3a3a;
+  padding: 16px 20px;
+  min-width: 340px;
+  max-width: 460px;
+  max-height: 80vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#help-box h3 { color: #9ce; margin: 0 0 8px; }
+
+/* Help button in toolbar */
+#btn-help {
+  margin-left: auto;
+  font-weight: bold;
+  font-size: 13px;
+  padding: 2px 10px;
+  color: #9ce;
+  border-color: #2e6090;
+}
 #editor-canvas { border: 1px solid #444; background: #0a0a0a; display: block; margin: 8px 0; image-rendering: pixelated; cursor: crosshair; }
 .editor-tools { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
 .editor-tools button { padding: 4px 8px; font-size: 10px; }
@@ -257,6 +294,60 @@ select.type-sel {
 </head>
 <body>
 
+<!-- TILE EDITOR POPUP -->
+<div id="tile-editor-overlay" class="overlay" onclick="if(event.target===this)closeTileEditorPopup()">
+  <div id="tile-editor-box">
+    <h3>Tile Editor — <span id="editor-tile-id">0</span></h3>
+    <div id="editor-panel">
+      <div id="editor-info" style="color:#777;font-size:10px;margin-bottom:4px;">Double-click any palette tile to edit it</div>
+      <div class="editor-label">Draw Tools</div>
+      <div class="editor-tools">
+        <button class="tbtn active" id="editor-pen" title="Pencil">✏</button>
+        <button class="tbtn" id="editor-erase" title="Eraser">✕</button>
+        <button class="tbtn" id="editor-pick" title="Pick Color">🎯</button>
+        <button class="tbtn" id="editor-fill" title="Fill">⬛</button>
+        <input type="color" id="editor-color" value="#4b6271" title="Pen Color">
+        <button class="tbtn danger" id="editor-clear" title="Clear all pixels">🗑</button>
+        <button class="tbtn import-btn" id="editor-dup" title="Duplicate as new tile">⧉</button>
+        <button class="tbtn" id="editor-done" title="Close">✓ Done</button>
+      </div>
+      <canvas id="editor-canvas" width="320" height="320"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- HELP POPUP -->
+<div id="help-overlay" class="overlay" onclick="if(event.target===this)closeHelpPopup()">
+  <div id="help-box">
+    <h3>Keyboard Shortcuts &amp; Help</h3>
+    <p style="color:#9ce;margin-bottom:2px;font-size:12px;">Tools</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">B</b> Paint &nbsp;|&nbsp; <b style="color:#bbb">E</b> Erase &nbsp;|&nbsp; <b style="color:#bbb">F</b> Fill &nbsp;|&nbsp; <b style="color:#bbb">P</b> Pick &nbsp;|&nbsp; <b style="color:#bbb">X</b> Exit &nbsp;|&nbsp; <b style="color:#bbb">S</b> Spawn</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">G</b> Grid &nbsp;|&nbsp; <b style="color:#bbb">+/−</b> Zoom</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Ctrl+Z</b> Undo &nbsp;|&nbsp; <b style="color:#bbb">Ctrl+Y</b> Redo</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Arrow keys</b> Scroll map</p>
+    <br>
+    <p style="color:#9ce;margin-bottom:2px;font-size:12px;">Navigation</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Middle-drag</b> or <b style="color:#bbb">Alt+drag</b> Pan</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Scroll wheel</b> Zoom</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Right-drag</b> Erase</p>
+    <br>
+    <p style="color:#9ce;margin-bottom:2px;font-size:12px;">Tint &amp; Type</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;">Select a palette tile then change its <b style="color:#bbb">Tint</b> to recolor every instance on the map. Set <b style="color:#bbb">Type</b> for in-game collision.</p>
+    <br>
+    <p style="color:#9ce;margin-bottom:2px;font-size:12px;">Tile Editor</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;">Double-click any palette tile (or click <b style="color:#bbb">Edit Tile</b> in the info panel) to open the tile editor popup.</p>
+    <br>
+    <p style="color:#9ce;margin-bottom:2px;font-size:12px;">World</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Save World</b> downloads world.json (all maps + exits + tints).</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">X</b> Exit tool — click any cell to link it to another map.</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">S</b> Spawn tool — click any cell to set the player start position.</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;"><b style="color:#bbb">Minimap</b> (bottom-right) — click or drag to pan the camera.</p>
+    <p style="color:#777;line-height:1.9;font-size:11px;">Auto-saves to browser storage every 30s.</p>
+    <br>
+    <div style="text-align:right"><button class="tbtn" onclick="closeHelpPopup()">Close</button></div>
+  </div>
+</div>
+
 <!-- LOADING SCREEN -->
 <div id="loading">
   <div>Loading tiles…</div>
@@ -292,6 +383,7 @@ select.type-sel {
   <button class="tbtn" id="btn-load-file">📂 Load</button>
   <div class="sep"></div>
   <button class="tbtn danger" id="btn-clear">🗑 Clear</button>
+  <button class="tbtn" id="btn-help" title="Help / Keyboard shortcuts">?</button>
 </div>
 
 <!-- MAIN -->
@@ -300,28 +392,11 @@ select.type-sel {
     <div id="sidebar-tabs">
       <div class="stab active" id="tab-palette" onclick="switchTab('palette')">Palette</div>
       <div class="stab" id="tab-maps"    onclick="switchTab('maps')">Maps</div>
-      <div class="stab" id="tab-editor"  onclick="switchTab('editor')">Tile Ed.</div>
       <div class="stab" id="tab-assets"  onclick="switchTab('assets')">Assets</div>
-      <div class="stab" id="tab-help"    onclick="switchTab('help')">Help</div>
     </div>
 
     <div id="palette-scroll">
       <canvas id="palette-canvas"></canvas>
-      <div id="editor-panel">
-        <div id="editor-info">Tile: <span id="editor-tile-id">0</span></div>
-        <div class="editor-label">Draw Tools</div>
-        <div class="editor-tools">
-          <button class="tbtn active" id="editor-pen" title="Pencil">✏</button>
-          <button class="tbtn" id="editor-erase" title="Eraser">✕</button>
-          <button class="tbtn" id="editor-pick" title="Pick Color">🎯</button>
-          <button class="tbtn" id="editor-fill" title="Fill">⬛</button>
-          <input type="color" id="editor-color" value="#4b6271" title="Pen Color">
-          <button class="tbtn danger" id="editor-clear" title="Clear all pixels">🗑</button>
-          <button class="tbtn import-btn" id="editor-dup" title="Duplicate as new tile">⧉</button>
-          <button class="tbtn" id="editor-done" title="Done — back to palette">✓</button>
-        </div>
-        <canvas id="editor-canvas" width="320" height="320"></canvas>
-      </div>
       <div id="maps-panel">
         <div class="maps-hdr">
           <span>World Maps</span>
@@ -331,29 +406,6 @@ select.type-sel {
       </div>
 
       <div id="assets-panel" style="display:none;padding:8px;"></div>
-
-      <div id="help-content" style="display:none;padding:4px;color:#777;line-height:1.9;font-size:11px;">
-        <p style="color:#9ce;margin-bottom:4px;font-size:12px;">Tools</p>
-        <p><b style="color:#bbb">B</b> Paint &nbsp;|&nbsp; <b style="color:#bbb">E</b> Erase &nbsp;|&nbsp; <b style="color:#bbb">F</b> Fill &nbsp;|&nbsp; <b style="color:#bbb">P</b> Pick &nbsp;|&nbsp; <b style="color:#bbb">X</b> Exit &nbsp;|&nbsp; <b style="color:#bbb">S</b> Spawn</p>
-        <p><b style="color:#bbb">G</b> Grid &nbsp;|&nbsp; <b style="color:#bbb">+/−</b> Zoom</p>
-        <p><b style="color:#bbb">Ctrl+Z</b> Undo &nbsp;|&nbsp; <b style="color:#bbb">Ctrl+Y</b> Redo</p>
-        <p><b style="color:#bbb">Arrow keys</b> Scroll map</p>
-        <br>
-        <p style="color:#9ce;margin-bottom:4px;font-size:12px;">Navigation</p>
-        <p><b style="color:#bbb">Middle-drag</b> or <b style="color:#bbb">Alt+drag</b> Pan</p>
-        <p><b style="color:#bbb">Scroll wheel</b> Zoom</p>
-        <p><b style="color:#bbb">Right-drag</b> Erase</p>
-        <br>
-        <p style="color:#9ce;margin-bottom:4px;font-size:12px;">Tint &amp; Type</p>
-        <p>Select a palette tile then change its <b style="color:#bbb">Tint</b> to recolor every instance on the map. Set <b style="color:#bbb">Type</b> for in-game collision.</p>
-        <br>
-        <p style="color:#9ce;margin-bottom:4px;font-size:12px;">Export</p>
-        <p><b style="color:#bbb">Save World</b> downloads world.json (all maps + exits + tints).</p>
-        <p><b style="color:#bbb">X</b> Exit tool — click any cell to link it to another map. Exits appear as green E markers.</p>
-        <p><b style="color:#bbb">S</b> Spawn tool — click any cell to set the player start position (gold P marker). Saved per map.</p>
-        <p><b style="color:#bbb">Minimap</b> (bottom-right) — click or drag to pan the camera. Gold dot = spawn, green dots = exits, white box = current view.</p>
-        <p>Auto-saves to browser storage every 30s.</p>
-      </div>
     </div>
 
     <div id="tile-info">
@@ -2162,16 +2214,32 @@ function importAsset(key) {
   inp.click();
 }
 
+function openTileEditorPopup() {
+  if (editingTileId < 0) startEditTile(selTile);
+  document.getElementById('tile-editor-overlay').style.display = 'flex';
+}
+
+function closeTileEditorPopup() {
+  document.getElementById('tile-editor-overlay').style.display = 'none';
+  renderPalette(); renderPreview();
+}
+
+function openHelpPopup() {
+  document.getElementById('help-overlay').style.display = 'flex';
+}
+
+function closeHelpPopup() {
+  document.getElementById('help-overlay').style.display = 'none';
+}
+
 function switchTab(tab) {
+  if (tab === 'editor') { openTileEditorPopup(); return; }
   document.getElementById('palette-canvas').style.display = tab === 'palette' ? 'block' : 'none';
   document.getElementById('maps-panel'   ).style.display  = tab === 'maps'    ? 'block' : 'none';
-  document.getElementById('editor-panel' ).style.display  = tab === 'editor'  ? 'block' : 'none';
   document.getElementById('assets-panel' ).style.display  = tab === 'assets'  ? 'block' : 'none';
-  document.getElementById('help-content' ).style.display  = tab === 'help'    ? 'block' : 'none';
-  ['palette','maps','editor','assets','help'].forEach(t =>
+  ['palette','maps','assets'].forEach(t =>
     document.getElementById('tab-' + t).classList.toggle('active', t === tab)
   );
-  if (tab === 'editor' && editingTileId < 0) startEditTile(selTile);
   if (tab === 'maps')   renderMapsList();
   if (tab === 'assets') renderAssetsPanel();
 }
@@ -2428,7 +2496,7 @@ document.getElementById('type-sel').addEventListener('change', e => {
 });
 document.getElementById('btn-edit-tile').addEventListener('click', () => {
   startEditTile(selTile);
-  switchTab('editor');
+  openTileEditorPopup();
 });
 // Rename: live update on every keystroke
 document.getElementById('info-name').addEventListener('input', e => {
@@ -2583,7 +2651,8 @@ document.getElementById('editor-clear').onclick = () => {
   renderEditorCanvas();
 };
 document.getElementById('editor-dup').onclick = duplicateCurrentTile;
-document.getElementById('editor-done').onclick = () => { switchTab('palette'); };
+document.getElementById('editor-done').onclick = () => { closeTileEditorPopup(); };
+document.getElementById('btn-help').onclick = () => { openHelpPopup(); };
 
 editorCanvas.addEventListener('mousedown', e => {
   const rect = editorCanvas.getBoundingClientRect();
