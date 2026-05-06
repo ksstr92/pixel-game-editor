@@ -1069,29 +1069,23 @@ function openExitModal(fromRow, fromCol) {
 
   const existIdx = cur.exits.findIndex(e => e.fromRow === fromRow && e.fromCol === fromCol);
   const existing = existIdx >= 0 ? cur.exits[existIdx] : null;
-  const otherMaps = worldMaps.filter(m => m.id !== currentMapId);
 
   const ov = makeOverlay(); const box = makeModalBox();
   box.style.minWidth = '380px';
   const h3 = el('h3', (existing ? 'Edit Exit' : '+ New Exit') + ` at row ${fromRow}, col ${fromCol}`);
 
-  // Target map select
+  // Target map select (includes current map for same-map warps)
   const mapRow = document.createElement('div'); mapRow.className = 'info-row';
   const mapLbl = el('span', 'To Map:'); mapLbl.className = 'info-lbl';
   const mapSel = document.createElement('select'); mapSel.className = 'type-sel';
   mapSel.style.flex = '1';
-  if (otherMaps.length === 0) {
+  worldMaps.forEach(m => {
     const opt = document.createElement('option');
-    opt.value = ''; opt.textContent = '— create more maps first —'; mapSel.appendChild(opt);
-  } else {
-    otherMaps.forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m.id; opt.textContent = m.name;
-      if (existing && existing.toMapId === m.id) opt.selected = true;
-      mapSel.appendChild(opt);
-    });
-    if (!existing) mapSel.value = otherMaps[0].id;
-  }
+    opt.value = m.id;
+    opt.textContent = m.id === currentMapId ? m.name + ' (this map)' : m.name;
+    if (existing ? existing.toMapId === m.id : m.id === currentMapId) opt.selected = true;
+    mapSel.appendChild(opt);
+  });
   mapRow.append(mapLbl, mapSel);
 
   // Entry row / col inputs
