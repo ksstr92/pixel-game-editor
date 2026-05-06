@@ -440,6 +440,7 @@ select.type-sel {
               <option value="5">PATH (walk)</option>
               <option value="6">FLOOR (walk)</option>
               <option value="7">DWALL (solid)</option>
+              <option value="8">OVERLAY (on top)</option>
             </select>
           </div>
           <div class="info-row">
@@ -471,7 +472,7 @@ let SHEET_ROWS  = 8;
 let TOTAL_TILES = 136;   // updated dynamically when a tileset is imported
 
 // Logical T types (matching game.html)
-const T = { WALL:0, GRASS:1, WATER:2, SWALL:3, TREE:4, PATH:5, FLOOR:6, DWALL:7 };
+const T = { WALL:0, GRASS:1, WATER:2, SWALL:3, TREE:4, PATH:5, FLOOR:6, DWALL:7, OVERLAY:8 };
 
 // ── Accurate tile names (from visual inspection of each tile_XXXX.png) ──
 const MT_NAMES = [
@@ -599,7 +600,8 @@ function loadAllTiles(onDone) {
 // ── Editable state ────────────────────────────────────────
 const DEFAULT_TINT = '#4b6271';
 
-let tileMap   = [];
+let tileMap    = [];
+let overlayMap = [];   // second layer: tiles drawn on top with transparent bg
 let tintTable = new Array(TOTAL_TILES).fill(DEFAULT_TINT);
 let typeTable = [...DEFAULT_T];
 
@@ -796,14 +798,20 @@ function duplicateCurrentTile() {
 function flushCurrentMap() {
   if (!currentMapId) return;
   const cur = worldMaps.find(m => m.id === currentMapId);
-  if (cur) cur.tileMap = tileMap.map(r => [...r]);
+  if (cur) {
+    cur.tileMap    = tileMap.map(r => [...r]);
+    cur.overlayMap = overlayMap.map(r => [...r]);
+  }
 }
 
 function createNewMap(name) {
   const id = genMapId();
-  const newTM = [];
-  for (let r = 0; r < MAP_ROWS; r++) newTM.push(new Array(MAP_COLS).fill(-1));
-  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, exits: [], npcs: [], triggers: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } });
+  const newTM = [], newOM = [];
+  for (let r = 0; r < MAP_ROWS; r++) {
+    newTM.push(new Array(MAP_COLS).fill(-1));
+    newOM.push(new Array(MAP_COLS).fill(-1));
+  }
+  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, overlayMap: newOM, exits: [], npcs: [], triggers: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } });
   return id;
 }
 
@@ -818,6 +826,10 @@ function switchToMap(id) {
   const m = worldMaps.find(m => m.id === id);
   if (!m) return;
   tileMap = m.tileMap.map(r => [...r]);
+  // Load overlayMap; init empty if absent (backward compat with old world.json)
+  overlayMap = m.overlayMap
+    ? m.overlayMap.map(r => [...r])
+    : Array.from({length: MAP_ROWS}, () => new Array(MAP_COLS).fill(-1));
   undoStack = []; redoStack = [];
   markMinimapDirty();
   clampCam();
@@ -843,7 +855,8 @@ function duplicateMap(id) {
   if (!src) return;
   const newId  = genMapId();
   const newMap = { id: newId, name: src.name + ' copy', cols: src.cols, rows: src.rows,
-                   tileMap:   src.tileMap.map(r => [...r]),
+                   tileMap:    src.tileMap.map(r => [...r]),
+                   overlayMap: (src.overlayMap || []).map(r => [...r]),
                    exits:     (src.exits||[]).map(e=>({...e, id:'exit_'+genMapId()})),
                    npcs:      (src.npcs||[]).map(n=>({...n, id:'npc_'+genMapId()})),
                    triggers:  (src.triggers||[]).map(t=>({...t, id:'trig_'+genMapId()})),
@@ -1756,15 +1769,18 @@ function renderMinimap() {
 }
 
 // ── Core draw: single tile on any canvas context ──────────
-function drawTile(ctx, id, dx, dy, size) {
+// noFill=true skips the background rectangle — used for overlay tiles so the
+// base tile shows through the sprite's white/light areas (multiply blend).
+function drawTile(ctx, id, dx, dy, size, noFill = false) {
   if (id < 0) {
-    ctx.fillStyle = '#161412';
-    ctx.fillRect(dx, dy, size, size);
+    if (!noFill) { ctx.fillStyle = '#161412'; ctx.fillRect(dx, dy, size, size); }
     return;
   }
-  const tint = tintTable[id] || DEFAULT_TINT;
-  ctx.fillStyle = tint;
-  ctx.fillRect(dx, dy, size, size);
+  if (!noFill) {
+    const tint = tintTable[id] || DEFAULT_TINT;
+    ctx.fillStyle = tint;
+    ctx.fillRect(dx, dy, size, size);
+  }
 
   ctx.save();
   ctx.globalCompositeOperation = 'multiply';
@@ -1904,6 +1920,16 @@ function renderMap() {
       drawTile(mapCtx, tileMap[r][c], dx, dy, ts);
     }
   }
+  // Overlay layer — drawn on top; no background fill so base shows through
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      const ot = overlayMap[r]?.[c] ?? -1;
+      if (ot < 0) continue;
+      const dx = Math.round(c * ts - camX);
+      const dy = Math.round(r * ts - camY);
+      drawTile(mapCtx, ot, dx, dy, ts, true);
+    }
+  }
 
   // Map boundary
   mapCtx.strokeStyle = 'rgba(100,160,255,0.2)';
@@ -1977,22 +2003,30 @@ function clampCam() {
 }
 
 // ── Paint / erase / fill ───────────────────────────────────
+// Returns true if the currently selected tile targets the overlay layer
+function isOverlayTile() { return typeTable[selTile] === T.OVERLAY; }
+
 function paint(r, c) {
   if (r < 0 || r >= MAP_ROWS || c < 0 || c >= MAP_COLS) return;
   if (lastCell.r === r && lastCell.c === c) return;
   lastCell = { r, c };
+  const onOverlay = isOverlayTile();
+  const map = onOverlay ? overlayMap : tileMap;
   const nw  = tool === 'erase' ? -1 : selTile;
-  const old = tileMap[r][c];
+  const old = map[r][c];
   if (old === nw) return;
-  pushUndo([{ r, c, old, nw }]);
-  tileMap[r][c] = nw;
+  pushUndo([{ r, c, old, nw, layer: onOverlay ? 'overlay' : 'base' }]);
+  map[r][c] = nw;
   markMinimapDirty();
   renderMap();
 }
 
 function floodFill(r, c) {
   if (r < 0 || r >= MAP_ROWS || c < 0 || c >= MAP_COLS) return;
-  const target = tileMap[r][c];
+  const onOverlay = isOverlayTile();
+  const map   = onOverlay ? overlayMap : tileMap;
+  const layer = onOverlay ? 'overlay' : 'base';
+  const target = map[r][c];
   const fill   = tool === 'erase' ? -1 : selTile;
   if (target === fill) return;
   const ops = [];
@@ -2003,9 +2037,9 @@ function floodFill(r, c) {
     const idx = q.shift();
     const cr  = Math.floor(idx / MAP_COLS);
     const cc  = idx % MAP_COLS;
-    if (tileMap[cr][cc] !== target) continue;
-    ops.push({ r:cr, c:cc, old:target, nw:fill });
-    tileMap[cr][cc] = fill;
+    if (map[cr][cc] !== target) continue;
+    ops.push({ r:cr, c:cc, old:target, nw:fill, layer });
+    map[cr][cc] = fill;
     for (const ni of [
       (cr-1)*MAP_COLS+cc, (cr+1)*MAP_COLS+cc,
        cr*MAP_COLS+(cc-1), cr*MAP_COLS+(cc+1)
@@ -2029,14 +2063,14 @@ function pushUndo(ops) {
 function undo() {
   if (!undoStack.length) return;
   const ops = undoStack.pop();
-  for (const o of ops) tileMap[o.r][o.c] = o.old;
+  for (const o of ops) (o.layer === 'overlay' ? overlayMap : tileMap)[o.r][o.c] = o.old;
   redoStack.push(ops);
   markMinimapDirty(); renderMap();
 }
 function redo() {
   if (!redoStack.length) return;
   const ops = redoStack.pop();
-  for (const o of ops) tileMap[o.r][o.c] = o.nw;
+  for (const o of ops) (o.layer === 'overlay' ? overlayMap : tileMap)[o.r][o.c] = o.nw;
   undoStack.push(ops);
   markMinimapDirty(); renderMap();
 }
@@ -2044,8 +2078,11 @@ function redo() {
 // ── Init map ───────────────────────────────────────────────
 function initMap(fill = -1) {
   tileMap = [];
-  for (let r = 0; r < MAP_ROWS; r++)
+  overlayMap = [];
+  for (let r = 0; r < MAP_ROWS; r++) {
     tileMap.push(new Array(MAP_COLS).fill(fill));
+    overlayMap.push(new Array(MAP_COLS).fill(-1));
+  }
 }
 
 // ── Tool / zoom ────────────────────────────────────────────
@@ -2358,7 +2395,8 @@ function loadLegacyMap(data) {
     for (let c = 0; c < MAP_COLS; c++) row.push(data.tileMap[r]?.[c] ?? -1);
     tm.push(row);
   }
-  worldMaps = [{ id, name: 'Imported Map', cols: MAP_COLS, rows: MAP_ROWS, tileMap: tm, exits: [], npcs: [], triggers: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } }];
+  const om = Array.from({length: MAP_ROWS}, () => new Array(MAP_COLS).fill(-1));
+  worldMaps = [{ id, name: 'Imported Map', cols: MAP_COLS, rows: MAP_ROWS, tileMap: tm, overlayMap: om, exits: [], npcs: [], triggers: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } }];
   if (data.tintTable?.length  === TOTAL_TILES) tintTable   = [...data.tintTable];
   if (data.typeTable?.length  === TOTAL_TILES) typeTable   = [...data.typeTable];
   if (data.customNames?.length=== TOTAL_TILES) customNames = [...data.customNames];

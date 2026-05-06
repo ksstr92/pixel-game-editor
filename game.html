@@ -125,7 +125,8 @@ const ETYPE_REMAP  = [0, 1, 4, 3, 5, 6, 2, 7];
 
 function buildMap() {
   // ── Build visual map from editor JSON data ─────────────────────────────────
-  visualMap = Array.from({length: MAP_ROWS}, () => new Array(MAP_COLS).fill(-1));
+  visualMap     = Array.from({length: MAP_ROWS}, () => new Array(MAP_COLS).fill(-1));
+  visualOverlay = Array.from({length: MAP_ROWS}, () => new Array(MAP_COLS).fill(-1));
 
   // Sparse tile data (row → [[col, mt_id], ...]) — exported from map editor
   // Player spawn at (11,10) was tile 119; replaced here with 22 (GRASS)
@@ -458,6 +459,7 @@ function tileRng(r,c) { return (((Math.sin(r*127.1+c*311.7)*43758.5)%1)+1)%1; }
 
 let gameMap;
 let visualMap;
+let visualOverlay;  // second layer: overlay tiles drawn on top with transparent bg
 
 // ── World / Map-travel state ───────────────────────────────────────────────
 let worldData         = null;   // parsed world.json
@@ -511,9 +513,30 @@ function drawMap() {
   const c1 = Math.min(MAP_COLS - 1, Math.ceil((cam.x + VW) / TS));
   const r0 = Math.max(0, Math.floor(cam.y / TS));
   const r1 = Math.min(MAP_ROWS - 1, Math.ceil((cam.y + VH) / TS));
+  // Base layer
   for (let r = r0; r <= r1; r++)
     for (let c = c0; c <= c1; c++)
       drawTile(r, c);
+  // Overlay layer — drawn on top; skip background fill so base tile shows through
+  if (visualOverlay && monoReady && worldData) {
+    const sheetCols = Math.floor(monoSheet.naturalWidth / 16) || 17;
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.imageSmoothingEnabled = true;
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const ot = visualOverlay[r]?.[c] ?? -1;
+        if (ot < 0) continue;
+        const dx = c*TS - cam.x, dy = r*TS - cam.y;
+        const ct = worldData.customTiles?.[ot];
+        const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : ot;
+        if (baseId >= 0)
+          ctx.drawImage(monoSheet, (baseId%sheetCols)*16, Math.floor(baseId/sheetCols)*16, 16, 16, dx, dy, TS, TS);
+        if (ct?.pixels) { const cv = getWorldTileCanvas(ot); if (cv) ctx.drawImage(cv, dx, dy, TS, TS); }
+      }
+    }
+    ctx.restore();
+  }
 }
 
 function drawTorches() {
@@ -1233,8 +1256,11 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
   if (!m) { console.warn('activateWorldMap: map not found', mapId); return; }
   currentWorldMapId = mapId;
 
-  // Rebuild visualMap from world map data
-  visualMap = m.tileMap.map(r => [...r]);
+  // Rebuild visualMap and overlay from world map data
+  visualMap     = m.tileMap.map(r => [...r]);
+  visualOverlay = m.overlayMap
+    ? m.overlayMap.map(r => [...r])
+    : Array.from({length: MAP_ROWS}, () => new Array(MAP_COLS).fill(-1));
   worldTileCache.clear(); // flush per-tile canvas cache on map change
 
   // Move player: prefer explicit entry coords, then map's saved spawn, then center
