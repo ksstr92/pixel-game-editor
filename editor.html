@@ -1042,8 +1042,10 @@ function renderMapsList() {
 function serializeCustomTiles() {
   const out = {};
   for (const [id, imgData] of editedTiles) {
-    out[id] = { base: tileBaseMap.has(id) ? tileBaseMap.get(id) : -1,
-                pixels: Array.from(imgData.data) };
+    // For built-in tiles edited directly, base = id itself (so game knows to draw the original beneath)
+    const base = tileBaseMap.has(id) ? tileBaseMap.get(id)
+               : (id < TOTAL_TILES   ? id : -1);
+    out[id] = { base, pixels: Array.from(imgData.data) };
   }
   for (const [id, baseId] of tileBaseMap) {
     if (!out[id]) out[id] = { base: baseId, pixels: null };
@@ -1814,8 +1816,9 @@ function drawTile(ctx, id, dx, dy, size, noFill = false) {
       ctx.drawImage(img, dx, dy, size, size);
   }
 
-  // Draw user's pixel edits on top (if any)
+  // Draw user's pixel edits on top (source-over so they fully replace the base tile pixels)
   if (editedTiles.has(id)) {
+    ctx.globalCompositeOperation = 'source-over';
     const sc = _tileScratch.getContext('2d');
     sc.clearRect(0, 0, 16, 16);
     sc.putImageData(editedTiles.get(id), 0, 0);

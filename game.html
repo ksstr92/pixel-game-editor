@@ -495,7 +495,10 @@ function drawTile(r,c) {
     const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : mt;
     if (baseId >= 0 && monoReady)
       { const mc=monoCol(); ctx.drawImage(monoSheet, (baseId%mc)*16, Math.floor(baseId/mc)*16, 16, 16, dx, dy, TS, TS); }
-    if (ct?.pixels) { const cv = getWorldTileCanvas(mt); if (cv) ctx.drawImage(cv, dx, dy, TS, TS); }
+    if (ct?.pixels) {
+      ctx.globalCompositeOperation = 'source-over';
+      const cv = getWorldTileCanvas(mt); if (cv) ctx.drawImage(cv, dx, dy, TS, TS);
+    }
     ctx.restore();
   } else {
     drawMonoTile(mt, dx, dy, '#4b6271');
@@ -527,7 +530,10 @@ function drawMap() {
         const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : ot;
         if (baseId >= 0)
           ctx.drawImage(monoSheet, (baseId%mc)*16, Math.floor(baseId/mc)*16, 16, 16, dx, dy, TS, TS);
-        if (ct?.pixels) { const cv = getWorldTileCanvas(ot); if (cv) ctx.drawImage(cv, dx, dy, TS, TS); }
+        if (ct?.pixels) {
+          ctx.globalCompositeOperation = 'source-over';
+          const cv = getWorldTileCanvas(ot); if (cv) ctx.drawImage(cv, dx, dy, TS, TS);
+        }
       }
     }
     ctx.restore();
