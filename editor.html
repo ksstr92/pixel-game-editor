@@ -278,17 +278,15 @@ select.type-sel {
   <button class="tbtn" id="btn-trigger" title="Place Trigger [T]">⚡ Trigger</button>
   <div class="sep"></div>
   <span style="color:#555;">Zoom:</span>
-  <button class="tbtn" id="btn-z1">1×</button>
-  <button class="tbtn active" id="btn-z2">2×</button>
-  <button class="tbtn" id="btn-z3">3×</button>
-  <button class="tbtn" id="btn-z4">4×</button>
+  <select id="zoom-select" class="type-sel" title="Zoom level">
+    <option value="1">1×</option>
+    <option value="2" selected>2×</option>
+    <option value="3">3×</option>
+    <option value="4">4×</option>
+  </select>
   <div class="sep"></div>
   <button class="tbtn active" id="btn-grid" title="Toggle Grid [G]">▦ Grid</button>
   <div class="sep"></div>
-  <button class="tbtn" title="Undo [Ctrl+Z]" id="btn-undo">↩ Undo</button>
-  <button class="tbtn" title="Redo [Ctrl+Y]" id="btn-redo">↪ Redo</button>
-  <div class="sep"></div>
-  <button class="tbtn export-btn" id="btn-export">⬆ Export JS</button>
   <button class="tbtn import-btn" id="btn-import">⬇ Import</button>
   <button class="tbtn" id="btn-save">💾 Save World</button>
   <button class="tbtn" id="btn-load-file">📂 Load</button>
@@ -350,7 +348,6 @@ select.type-sel {
         <p>Select a palette tile then change its <b style="color:#bbb">Tint</b> to recolor every instance on the map. Set <b style="color:#bbb">Type</b> for in-game collision.</p>
         <br>
         <p style="color:#9ce;margin-bottom:4px;font-size:12px;">Export</p>
-        <p><b style="color:#bbb">Export JS</b> copies VISUAL_MAP + GAME_MAP to clipboard — paste into game.html buildMap().</p>
         <p><b style="color:#bbb">Save World</b> downloads world.json (all maps + exits + tints).</p>
         <p><b style="color:#bbb">X</b> Exit tool — click any cell to link it to another map. Exits appear as green E markers.</p>
         <p><b style="color:#bbb">S</b> Spawn tool — click any cell to set the player start position (gold P marker). Saved per map.</p>
@@ -1923,9 +1920,7 @@ function setZoom(z, pivotX, pivotY) {
   camX = wx * (newTs / oldTs) - (pivotX ?? mapCanvas.width  / 2);
   camY = wy * (newTs / oldTs) - (pivotY ?? mapCanvas.height / 2);
   clampCam();
-  [1,2,3,4].forEach(n =>
-    document.getElementById('btn-z'+n).classList.toggle('active', n === zoom)
-  );
+  document.getElementById('zoom-select').value = String(zoom);
   renderMap();
 }
 
@@ -2409,18 +2404,12 @@ document.getElementById('btn-exit' ).onclick=()=>setTool('exit');
 document.getElementById('btn-spawn').onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
 document.getElementById('btn-npc'    ).onclick=()=>{ setTool('npc');     toast('Click any cell to place / edit an NPC'); };
 document.getElementById('btn-trigger').onclick=()=>{ setTool('trigger'); toast('Click any cell to place / edit a trigger'); };
-document.getElementById('btn-z1'   ).onclick=()=>setZoom(1);
-document.getElementById('btn-z2'   ).onclick=()=>setZoom(2);
-document.getElementById('btn-z3'   ).onclick=()=>setZoom(3);
-document.getElementById('btn-z4'   ).onclick=()=>setZoom(4);
-document.getElementById('btn-undo' ).onclick=undo;
-document.getElementById('btn-redo' ).onclick=redo;
+document.getElementById('zoom-select').addEventListener('change', e => setZoom(parseInt(e.target.value)));
 document.getElementById('btn-grid' ).onclick=()=>{
   showGrid=!showGrid;
   document.getElementById('btn-grid').classList.toggle('active',showGrid);
   renderMap();
 };
-document.getElementById('btn-export'   ).onclick=exportJS;
 document.getElementById('btn-import'   ).onclick=importModal;
 document.getElementById('btn-save'     ).onclick=saveFile;
 document.getElementById('btn-load-file').onclick=loadFile;
