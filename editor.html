@@ -2095,6 +2095,28 @@ function renderAssetsPanel() {
   });
 }
 
+// Slice a packed 17-col × 8-row tileset image into tileImgs[], then redraw.
+function loadTilesFromSheet(dataUrl, onDone) {
+  const img = new Image();
+  img.onload = () => {
+    const tmp = document.createElement('canvas');
+    tmp.width = tmp.height = 16;
+    const tc = tmp.getContext('2d');
+    let done = 0;
+    for (let id = 0; id < TOTAL_TILES; id++) {
+      tc.clearRect(0, 0, 16, 16);
+      tc.drawImage(img, (id % SHEET_COLS) * 16, Math.floor(id / SHEET_COLS) * 16, 16, 16, 0, 0, 16, 16);
+      const url = tmp.toDataURL();
+      const ti = new Image();
+      ti.onload = ti.onerror = () => { if (++done === TOTAL_TILES) onDone?.(); };
+      ti.src = url;
+      tileImgs[id] = ti;
+    }
+  };
+  img.onerror = () => toast('Could not read tileset image');
+  img.src = dataUrl;
+}
+
 function importAsset(key) {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = 'image/*';
@@ -2104,8 +2126,15 @@ function importAsset(key) {
     reader.onload = ev => {
       assets[key] = { name: file.name, dataUrl: ev.target.result };
       renderAssetsPanel();
-      const slot = ASSET_SLOTS.find(s => s.key === key);
-      toast(`${slot.label}: "${file.name}" loaded`);
+      if (key === 'tileset') {
+        loadTilesFromSheet(ev.target.result, () => {
+          renderPalette(); renderPreview(); renderMap();
+          toast(`Tileset "${file.name}" loaded — palette updated`);
+        });
+      } else {
+        const slot = ASSET_SLOTS.find(s => s.key === key);
+        toast(`${slot.label}: "${file.name}" loaded`);
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -2221,6 +2250,11 @@ function loadWorldData(data) {
   if (data.nextCustomTileId) nextCustomTileId = data.nextCustomTileId;
   if (data.customTiles)  deserializeCustomTiles(data.customTiles);
   assets = { tileset: null, charAtlas: null, ...( data.assets || {} ) };
+  if (assets.tileset?.dataUrl) {
+    loadTilesFromSheet(assets.tileset.dataUrl, () => {
+      renderPalette(); renderPreview(); renderMap();
+    });
+  }
   undoStack = []; redoStack = [];
   const startId = data.currentMapId || (worldMaps[0]?.id);
   if (startId && worldMaps.find(m => m.id === startId)) switchToMap(startId);
