@@ -802,6 +802,13 @@ function drawNPC(x,y,npc) {
       _sprCtx.drawImage(monoSheet, (baseId % mc) * 16, Math.floor(baseId / mc) * 16, 16, 16, 0, 0, TS, TS);
       if (!npc.facingRight) _sprCtx.restore();
     }
+    // Draw custom pixel edits on top (source-over so painted pixels replace the mono sprite)
+    const ct = worldData?.customTiles?.[npc.tileId];
+    if (ct?.pixels) {
+      _sprCtx.globalCompositeOperation = 'source-over';
+      const cv = getWorldTileCanvas(npc.tileId);
+      if (cv) _sprCtx.drawImage(cv, 0, 0, TS, TS);
+    }
     _sprCtx.globalCompositeOperation = 'source-over';
     ctx.save(); ctx.imageSmoothingEnabled = false;
     ctx.drawImage(_sprBuf, dx, dy);
