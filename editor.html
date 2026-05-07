@@ -1515,7 +1515,7 @@ function openTriggerModal(row, col) {
   }
 
   // ── Activation ───────────────────────────────────────────
-  const actRow = mkRow('Activate:');
+  const actRow = mkRow('Trigger when:');
   const actSel = document.createElement('select'); actSel.style.cssText = SS;
   [['interact','[E] Interact'],['walk','🚶 Walk-over']]
     .forEach(([v,l]) => { const o = document.createElement('option'); o.value=v; o.textContent=l; actSel.appendChild(o); });
@@ -1676,7 +1676,7 @@ function openTriggerModal(row, col) {
     })
   );
 
-  box.append(h3, actRow, titleRow, oneShotRow, eventsHdr, eventsList, btns);
+  box.append(h3, titleRow, actRow, oneShotRow, eventsHdr, eventsList, btns);
   ov.appendChild(box); document.body.appendChild(ov);
   ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
   titleInp.focus();
