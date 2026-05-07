@@ -375,10 +375,18 @@ select.type-sel {
   <button class="tbtn" id="btn-erase" title="Eraser [E]">🧹 Eraser</button>
   <button class="tbtn" id="btn-fill"  title="Bucket fill [F]">🪣 Bucket</button>
   <button class="tbtn" id="btn-pick"  title="Eyedropper [P]">🔍 Eyedropper</button>
-  <button class="tbtn" id="btn-exit"    title="Place/remove waypoint [X]" style="display:none">🚪 Waypoint</button>
-  <button class="tbtn" id="btn-spawn"   title="Set player spawn [S]" style="display:none">⚑ Spawn</button>
-  <button class="tbtn" id="btn-npc"     title="Place NPC [N]"        style="display:none">👤 NPC</button>
+  <div class="sep"></div>
+  <select id="insert-select" class="type-sel" title="Insert object" onchange="handleInsertSelect(this.value);this.value=''">
+    <option value="">＋ Insert</option>
+    <option value="exit">🚪 Waypoint [X]</option>
+    <option value="spawn">⚑ Spawn [S]</option>
+    <option value="npc">👤 NPC [N]</option>
+  </select>
   <button class="tbtn" id="btn-trigger" title="Place Trigger [T]">⚡ Trigger</button>
+  <!-- hidden tool buttons kept for setTool() active-state tracking -->
+  <button class="tbtn" id="btn-exit"  style="display:none">🚪 Waypoint</button>
+  <button class="tbtn" id="btn-spawn" style="display:none">⚑ Spawn</button>
+  <button class="tbtn" id="btn-npc"   style="display:none">👤 NPC</button>
   <button class="tbtn" id="btn-maps"    title="Manage maps">🗺 Maps</button>
   <div class="sep"></div>
   <span style="color:#555;">Zoom:</span>
@@ -2748,6 +2756,13 @@ document.getElementById('btn-pick' ).onclick=()=>setTool('pick');
 document.getElementById('btn-exit'  ).onclick=()=>setTool('exit');
 document.getElementById('btn-spawn' ).onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
 document.getElementById('btn-npc'   ).onclick=()=>{ setTool('npc'); toast('Click any cell to place / edit an NPC'); };
+
+function handleInsertSelect(val) {
+  if (!val) return;
+  if (val === 'exit')  { setTool('exit');  toast('Click any cell to place / edit a Waypoint'); }
+  if (val === 'spawn') { setTool('spawn'); toast('Click any cell to set the player spawn point'); }
+  if (val === 'npc')   { setTool('npc');   toast('Click any cell to place / edit an NPC'); }
+}
 document.getElementById('btn-maps'  ).onclick=()=>openMapsPopup();
 document.getElementById('btn-trigger').onclick=()=>{ setTool('trigger'); toast('Click any cell to place / edit a trigger'); };
 document.getElementById('zoom-select').addEventListener('change', e => setZoom(parseInt(e.target.value)));
