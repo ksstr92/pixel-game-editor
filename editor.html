@@ -1366,10 +1366,26 @@ function openNpcModal(row, col) {
         markMinimapDirty();
       }
 
+      // Build patrol data
+      const patrolType = patrolTypeSel.value;
+      let patrol;
+      if (patrolType === 'wander') {
+        patrol = { type: 'wander', radius: Math.max(1, parseInt(wanderInp.value, 10) || 3) };
+      } else if (patrolType === 'waypoint') {
+        const pts = wpTA.value.split('\n')
+          .map(s => s.trim()).filter(Boolean)
+          .map(s => { const [r, c] = s.split(',').map(Number); return { row: r|0, col: c|0 }; })
+          .filter(p => !isNaN(p.row) && !isNaN(p.col));
+        patrol = { type: 'waypoint', points: pts };
+      } else {
+        patrol = { type: 'none' };
+      }
+
       const npcData = {
         name, tileId, dialog,
         portrait:    portraitData ?? null,
         templateId:  selectedTmpl?.id ?? null,
+        patrol,
       };
 
       if (existing) {
@@ -1382,7 +1398,66 @@ function openNpcModal(row, col) {
     })
   );
 
-  box.append(h3, tmplWrap, nameRow, tileRow, dialogLbl, dialogTA, btns);
+  // ── Patrol ───────────────────────────────────────────────
+  const existingPatrol = existing?.patrol ?? { type: 'none', radius: 3, points: [] };
+
+  const patrolSep = document.createElement('div');
+  patrolSep.style.cssText = 'border-top:1px solid #2a2a2a;margin:8px 0 4px;';
+  const patrolLbl = document.createElement('div');
+  patrolLbl.style.cssText = 'color:#888;font-size:10px;margin-bottom:4px;';
+  patrolLbl.textContent = 'Patrol (NPC movement):';
+
+  const patrolTypeRow = document.createElement('div');
+  patrolTypeRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+  const patrolTypeLbl = document.createElement('span');
+  patrolTypeLbl.style.cssText = 'color:#aaa;font-size:10px;min-width:36px;';
+  patrolTypeLbl.textContent = 'Type:';
+  const patrolTypeSel = document.createElement('select');
+  patrolTypeSel.className = 'type-sel'; patrolTypeSel.style.flex = '1';
+  [['none','None — stays put'],['wander','Wander — random in area'],['waypoint','Waypoint — follow path']]
+    .forEach(([v, t]) => { const o = document.createElement('option'); o.value=v; o.textContent=t; patrolTypeSel.appendChild(o); });
+  patrolTypeSel.value = existingPatrol.type ?? 'none';
+  patrolTypeRow.append(patrolTypeLbl, patrolTypeSel);
+
+  // Wander sub-fields
+  const wanderWrap = document.createElement('div');
+  wanderWrap.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+  const wanderLbl = document.createElement('span');
+  wanderLbl.style.cssText = 'color:#aaa;font-size:10px;min-width:36px;';
+  wanderLbl.textContent = 'Radius:';
+  const wanderInp = document.createElement('input');
+  wanderInp.type='number'; wanderInp.min='1'; wanderInp.max='20';
+  wanderInp.style.cssText='background:#111;color:#ccc;border:1px solid #2a2a2a;padding:3px 6px;width:52px;font-family:inherit;font-size:11px;';
+  wanderInp.value = existingPatrol.radius ?? 3;
+  const wanderUnit = document.createElement('span');
+  wanderUnit.style.cssText='color:#666;font-size:10px;';
+  wanderUnit.textContent = 'tiles from spawn';
+  wanderWrap.append(wanderLbl, wanderInp, wanderUnit);
+
+  // Waypoint sub-fields
+  const wpWrap = document.createElement('div');
+  wpWrap.style.cssText = 'margin-bottom:6px;';
+  const wpLbl = document.createElement('div');
+  wpLbl.style.cssText = 'color:#aaa;font-size:10px;margin-bottom:3px;';
+  wpLbl.textContent = 'Waypoints — one "row,col" per line (NPC spawn is point 0, then these):';
+  const wpTA = document.createElement('textarea');
+  wpTA.style.cssText='background:#111;color:#9db;border:1px solid #2a2a2a;font-family:monospace;font-size:11px;padding:6px;resize:vertical;min-height:68px;width:100%;';
+  wpTA.placeholder = '3,5\n3,10\n8,10\n8,5';
+  wpTA.value = (existingPatrol.points ?? []).map(p => `${p.row},${p.col}`).join('\n');
+  wpWrap.append(wpLbl, wpTA);
+
+  function refreshPatrolUI() {
+    const v = patrolTypeSel.value;
+    wanderWrap.style.display = v === 'wander'    ? '' : 'none';
+    wpWrap.style.display     = v === 'waypoint'  ? '' : 'none';
+  }
+  patrolTypeSel.addEventListener('change', refreshPatrolUI);
+  refreshPatrolUI();
+
+  const patrolWrap = document.createElement('div');
+  patrolWrap.append(patrolSep, patrolLbl, patrolTypeRow, wanderWrap, wpWrap);
+
+  box.append(h3, tmplWrap, nameRow, tileRow, dialogLbl, dialogTA, patrolWrap, btns);
   ov.appendChild(box); document.body.appendChild(ov);
   ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
   nameInp.focus(); nameInp.select();

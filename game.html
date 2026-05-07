@@ -783,8 +783,10 @@ function drawNPC(x,y,npc) {
 
   // ── Monochrome tileId path (world-map NPCs) ────────────
   if (npc.tileId >= 0 && monoReady) {
-    const dx = Math.round(x - cam.x - TS/2);
-    const dy = Math.round(y - cam.y - TS/2);
+    // Subtle vertical bob while walking
+    const bob = npc.moving ? Math.round(Math.sin(Date.now() * 0.01) * 1.5) : 0;
+    const dx  = Math.round(x - cam.x - TS / 2);
+    const dy  = Math.round(y - cam.y - TS / 2) + bob;
     // Background-sample composite (same as drawKnight — no colored rect)
     _sprCtx.clearRect(0, 0, TS, TS);
     _sprCtx.drawImage(ctx.canvas, dx, dy, TS, TS, 0, 0, TS, TS);
@@ -793,14 +795,20 @@ function drawNPC(x,y,npc) {
     const baseId = worldData?.customTiles?.[npc.tileId]
       ? (worldData.customTiles[npc.tileId].base >= 0 ? worldData.customTiles[npc.tileId].base : -1)
       : npc.tileId;
-    if (baseId >= 0)
-      { const mc=monoCol(); _sprCtx.drawImage(monoSheet, (baseId%mc)*16, Math.floor(baseId/mc)*16, 16,16, 0,0,TS,TS); }
+    if (baseId >= 0) {
+      const mc = monoCol();
+      // Flip the sprite horizontally when facing left
+      if (!npc.facingRight) { _sprCtx.save(); _sprCtx.translate(TS, 0); _sprCtx.scale(-1, 1); }
+      _sprCtx.drawImage(monoSheet, (baseId % mc) * 16, Math.floor(baseId / mc) * 16, 16, 16, 0, 0, TS, TS);
+      if (!npc.facingRight) _sprCtx.restore();
+    }
     _sprCtx.globalCompositeOperation = 'source-over';
     ctx.save(); ctx.imageSmoothingEnabled = false;
     ctx.drawImage(_sprBuf, dx, dy);
     ctx.restore();
   } else if (sheetReady) {
-    sprEntAnim(npc.isElder ? SP.wizard : SP.merchant, sx, sy, false, 'idle', Date.now());
+    sprEntAnim(npc.isElder ? SP.wizard : SP.merchant, sx, sy, !npc.facingRight,
+               npc.moving ? 'walk' : 'idle', Date.now());
   } else {
   ctx.save();
   ctx.translate(sx,sy);
@@ -1136,8 +1144,143 @@ function drawInventory() {
 // ════════════════════════════════════════════════════════════════════════════
 // HUD
 // ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// DAY / NIGHT
+// ════════════════════════════════════════════════════════════════════════════
+// Keyframes: [gameMinutes, r, g, b, overlayAlpha]
+const SKY_KF = [
+  [    0,  8, 10, 40, 0.74], // 0:00  deep night
+  [  300,  8, 10, 40, 0.74], // 5:00  still dark
+  [  360, 80, 42, 12, 0.44], // 6:00  dawn orange
+  [  450,  0,  0,  0, 0.00], // 7:30  full daylight
+  [ 1020,  0,  0,  0, 0.00], // 17:00 still day
+  [ 1080, 70, 30,  8, 0.38], // 18:00 dusk
+  [ 1200,  8, 10, 40, 0.74], // 20:00 night
+  [ 1440,  8, 10, 40, 0.74], // 24:00 (same as 0:00 for wrap)
+];
+
+function getSkyOverlay(mins) {
+  let i = 0;
+  while (i < SKY_KF.length - 2 && SKY_KF[i + 1][0] <= mins) i++;
+  const [t0, r0, g0, b0, a0] = SKY_KF[i];
+  const [t1, r1, g1, b1, a1] = SKY_KF[i + 1];
+  const f = t1 === t0 ? 0 : (mins - t0) / (t1 - t0);
+  return {
+    r: (r0 + (r1 - r0) * f) | 0,
+    g: (g0 + (g1 - g0) * f) | 0,
+    b: (b0 + (b1 - b0) * f) | 0,
+    a:  a0 + (a1 - a0) * f,
+  };
+}
+
+function drawDayNight() {
+  // World-space colour overlay (dims/tints the scene)
+  const sky = getSkyOverlay(gameTime);
+  if (sky.a > 0.005) {
+    ctx.fillStyle = `rgba(${sky.r},${sky.g},${sky.b},${sky.a.toFixed(3)})`;
+    ctx.fillRect(0, 0, VW, VH);
+  }
+
+  // Clock pill (top-right of HUD)
+  const h  = Math.floor(gameTime / 60) % 24;
+  const m  = Math.floor(gameTime % 60);
+  const ts = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const hs = hudScale;
+
+  const isNight    = gameTime < 360 || gameTime >= 1200;
+  const isTransit  = (gameTime >= 300 && gameTime < 480) || (gameTime >= 1020 && gameTime < 1200);
+  const dotColor   = isNight ? '#88aaff' : isTransit ? '#ffaa44' : '#ffee66';
+
+  const pw = 58 * hs, ph = 18 * hs;
+  const px = hudCanvas.width - pw - 6 * hs;
+  const py = 6 * hs;
+
+  hudCtx.fillStyle = 'rgba(0,0,0,0.55)';
+  hudCtx.fillRect(px, py, pw, ph);
+
+  // Sun/moon indicator dot
+  hudCtx.fillStyle = dotColor;
+  hudCtx.beginPath();
+  hudCtx.arc(px + 9 * hs, py + ph / 2, 4 * hs, 0, Math.PI * 2);
+  hudCtx.fill();
+
+  // Time string
+  hudCtx.fillStyle = '#ffffff';
+  hudCtx.font = `bold ${hF(10)}px monospace`;
+  hudCtx.textAlign = 'left';
+  hudCtx.fillText(ts, px + 17 * hs, py + 12.5 * hs);
+}
+
 function drawHUD() {
   // Hearts and dash bar removed
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// NPC PATROL
+// ════════════════════════════════════════════════════════════════════════════
+const NPC_WALK_SPEED = 36; // world-pixels per second
+
+function updateNPC(npc, dt) {
+  const type = npc.patrol?.type ?? 'none';
+  if (type === 'none') return;
+  if (activeDialog) return; // freeze patrol during conversations
+
+  if (npc.patrolWait > 0) {
+    npc.patrolWait -= dt;
+    npc.moving = false;
+    return;
+  }
+
+  // Pick the next target if we don't have one
+  if (!npc.patrolTarget) {
+    if (type === 'wander') {
+      const angle = Math.random() * Math.PI * 2;
+      const r = (0.35 + Math.random() * 0.65) * (npc.patrol.radius ?? 3) * TS;
+      npc.patrolTarget = {
+        x: clamp(npc.homeX + Math.cos(angle) * r, TS * 0.5, (MAP_COLS - 0.5) * TS),
+        y: clamp(npc.homeY + Math.sin(angle) * r, TS * 0.5, (MAP_ROWS - 0.5) * TS),
+      };
+    } else if (type === 'waypoint') {
+      const pts = npc.patrol.points ?? [];
+      if (!pts.length) return;
+      npc.patrolIdx = ((npc.patrolIdx ?? 0) + 1) % pts.length;
+      const p = pts[npc.patrolIdx];
+      npc.patrolTarget = { x: (p.col + 0.5) * TS, y: (p.row + 0.5) * TS };
+    }
+  }
+
+  if (!npc.patrolTarget) return;
+
+  const dx = npc.patrolTarget.x - npc.x;
+  const dy = npc.patrolTarget.y - npc.y;
+  const d  = Math.hypot(dx, dy);
+
+  if (d < 3) {
+    // Arrived
+    npc.x = npc.patrolTarget.x;
+    npc.y = npc.patrolTarget.y;
+    npc.patrolTarget = null;
+    npc.patrolWait   = type === 'waypoint'
+      ? 0.4 + Math.random() * 1.2
+      : 1.0 + Math.random() * 2.5;
+    npc.moving = false;
+  } else {
+    const step = NPC_WALK_SPEED * dt;
+    const nx   = npc.x + (dx / d) * step;
+    const ny   = npc.y + (dy / d) * step;
+    const res  = resolveCollision(npc, nx, ny);
+    if (res.x === npc.x && res.y === npc.y) {
+      // Stuck — abandon this target and wait
+      npc.patrolTarget = null;
+      npc.patrolWait   = 0.8;
+      npc.moving       = false;
+    } else {
+      npc.x           = res.x;
+      npc.y           = res.y;
+      npc.facingRight = dx > 0;
+      npc.moving      = true;
+    }
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1293,6 +1436,10 @@ let inventory     = [];   // [{ name, tileId, description, count }]
 let mapItems      = [];   // items placed on the current map
 let showInventory = false;
 let hudMouseX = 0, hudMouseY = 0; // mouse position in hud canvas pixels
+
+// ── Day/Night Cycle ──────────────────────────────────────────────────────────
+let gameTime = 360;               // game-minutes since midnight; 360 = 6:00 AM
+const MINS_PER_REAL_SEC = 10 / 7; // 7 real-seconds = 10 game-minutes (full day ≈ 16.8 min real)
 
 // Ease-in-out curve (0→1)
 const easeInOut = t => t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
@@ -1476,6 +1623,15 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
       dialog:      n.dialog ?? ['...'],
       portraitImg: null,
       isElder:     false,
+      // Patrol
+      patrol:       n.patrol ?? { type: 'none' },
+      homeX:        (n.col + 0.5) * TS,
+      homeY:        (n.row + 0.5) * TS,
+      patrolTarget: null,
+      patrolWait:   Math.random() * 2.5, // stagger so NPCs don't all start simultaneously
+      patrolIdx:    0,
+      moving:       false,
+      facingRight:  true,
     };
     // Pre-load portrait image so it's ready when dialog opens
     if (n.portrait?.dataUrl) {
@@ -1589,7 +1745,9 @@ function gameLoop(ts) {
   const dt=Math.min((ts-lastTime)/1000,0.05);
   lastTime=ts;
 
+  gameTime = (gameTime + MINS_PER_REAL_SEC * dt) % 1440;
   updatePlayer(dt);
+  npcs.forEach(n => updateNPC(n, dt));
   checkMapExits();
   checkWalkTriggers();
   updateEnemies(dt);
@@ -1671,6 +1829,7 @@ function gameLoop(ts) {
 
   drawParticles();
   drawFloats();
+  drawDayNight();
   drawDialog();
   drawInventory();
   drawHUD();
