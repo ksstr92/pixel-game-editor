@@ -586,6 +586,9 @@ function getEditorType(mt) {
 
 function passable(row,col) {
   if (row<0||row>=MAP_ROWS||col<0||col>=MAP_COLS) return false;
+  // Overlay (block) tiles on the overlay layer act as walls
+  const ot = visualOverlay?.[row]?.[col] ?? -1;
+  if (ot >= 0 && getEditorType(ot) === 9) return false; // OVERLAY_BLOCK
   const mt = visualMap[row][col];
   if (mt < 0) return false;
   const et = getEditorType(mt);

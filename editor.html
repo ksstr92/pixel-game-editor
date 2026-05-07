@@ -459,7 +459,8 @@ select.type-sel {
               <option value="5">PATH (walk)</option>
               <option value="6">FLOOR (walk)</option>
               <option value="7">DWALL (solid)</option>
-              <option value="8">OVERLAY (on top)</option>
+              <option value="8">OVERLAY walk (on top, passable)</option>
+              <option value="9">OVERLAY block (on top, solid)</option>
             </select>
           </div>
           <div class="info-row">
@@ -491,7 +492,7 @@ let SHEET_ROWS  = 8;
 let TOTAL_TILES = 136;   // updated dynamically when a tileset is imported
 
 // Logical T types (matching game.html)
-const T = { WALL:0, GRASS:1, WATER:2, SWALL:3, TREE:4, PATH:5, FLOOR:6, DWALL:7, OVERLAY:8 };
+const T = { WALL:0, GRASS:1, WATER:2, SWALL:3, TREE:4, PATH:5, FLOOR:6, DWALL:7, OVERLAY_WALK:8, OVERLAY_BLOCK:9 };
 
 // ── Accurate tile names (from visual inspection of each tile_XXXX.png) ──
 const MT_NAMES = [
@@ -2026,7 +2027,7 @@ function clampCam() {
 
 // ── Paint / erase / fill ───────────────────────────────────
 // Returns true if the currently selected tile targets the overlay layer
-function isOverlayTile() { return typeTable[selTile] === T.OVERLAY; }
+function isOverlayTile() { const t = typeTable[selTile]; return t === T.OVERLAY_WALK || t === T.OVERLAY_BLOCK; }
 
 function paint(r, c) {
   if (r < 0 || r >= MAP_ROWS || c < 0 || c >= MAP_COLS) return;
