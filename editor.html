@@ -648,6 +648,10 @@ let customNames = [...MT_NAMES];
 // Each slot: { name: string, dataUrl: string } or null
 let assets = { tileset: null, charAtlas: null };
 
+// ── NPC Templates ─────────────────────────────────────────
+// Each: { id, displayName, tileId, portrait: {name, dataUrl}|null }
+let npcTemplates = [];
+
 const ASSET_SLOTS = [
   { key: 'tileset',   label: 'Tileset',        hint: 'Packed 16×16 monochrome tilemap sheet (tilemap_packed.png)' },
   { key: 'charAtlas', label: 'Character Atlas', hint: '16×16 sprite atlas for heroes, enemies & NPCs' },
@@ -1158,67 +1162,129 @@ function openNpcModal(row, col) {
 
   const ov  = document.createElement('div'); ov.className = 'overlay';
   const box = document.createElement('div'); box.className = 'modal';
-  box.style.minWidth = '420px';
+  box.style.minWidth = '460px';
 
   const h3 = document.createElement('h3');
   h3.textContent = existing ? `Edit NPC (${row}, ${col})` : `Place NPC at (${row}, ${col})`;
   h3.style.color = '#3ab8dc';
 
-  // ── Name field ──────────────────────────────────────────
+  // ── Shared state ─────────────────────────────────────────
+  let selectedTmpl = null;
+  let portraitData = existing?.portrait ?? null; // { name, dataUrl } | null
+
+  // ── Template Picker ──────────────────────────────────────
+  const tmplWrap = document.createElement('div');
+  tmplWrap.style.cssText = 'background:#1a1a1a;border:1px solid #2a2a2a;padding:8px;border-radius:3px;';
+
+  const tmplRow = document.createElement('div');
+  tmplRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const tmplLbl = document.createElement('label');
+  tmplLbl.textContent = 'Template:';
+  tmplLbl.style.cssText = 'color:#888;min-width:70px;font-size:11px;';
+
+  const tmplSel = document.createElement('select');
+  tmplSel.className = 'type-sel'; tmplSel.style.flex = '1';
+  const noOpt = document.createElement('option');
+  noOpt.value = ''; noOpt.textContent = '— None (manual) —'; tmplSel.appendChild(noOpt);
+  npcTemplates.forEach(t => {
+    const o = document.createElement('option'); o.value = t.id;
+    o.textContent = t.displayName + (t.portrait ? ' ★' : '');
+    if (existing?.templateId === t.id) o.selected = true;
+    tmplSel.appendChild(o);
+  });
+
+  const tmplPorImg = document.createElement('img');
+  tmplPorImg.style.cssText = 'width:40px;height:40px;object-fit:cover;border:1px solid #444;image-rendering:pixelated;flex-shrink:0;background:#0a0a0a;';
+  if (existing?.portrait?.dataUrl) { tmplPorImg.src = existing.portrait.dataUrl; }
+  else { tmplPorImg.style.display = 'none'; }
+
+  tmplRow.append(tmplLbl, tmplSel, tmplPorImg);
+
+  const tmplNote = document.createElement('div');
+  tmplNote.style.cssText = 'color:#444;font-size:10px;margin-top:4px;';
+  tmplNote.textContent = 'Choose a template to auto-fill name/tile and attach a portrait image.';
+  tmplWrap.append(tmplRow, tmplNote);
+
+  // ── Name field ───────────────────────────────────────────
   const nameRow = document.createElement('div');
   nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
   const nameLbl = document.createElement('label');
-  nameLbl.textContent = 'Name:'; nameLbl.style.color = '#888'; nameLbl.style.minWidth = '60px';
+  nameLbl.textContent = 'Name:'; nameLbl.style.cssText = 'color:#888;min-width:70px;';
   const nameInp = document.createElement('input');
   nameInp.type = 'text'; nameInp.value = existing?.name ?? 'Villager';
   nameInp.style.cssText = 'flex:1;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
   nameRow.append(nameLbl, nameInp);
 
-  // ── Tile selector (editing only — new NPCs use the active palette tile) ─────
-  let tileRow = null, tileIdInp = null;
-  if (existing) {
-    tileRow = document.createElement('div');
-    tileRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
-    const tileLbl = document.createElement('label');
-    tileLbl.textContent = 'Tile:'; tileLbl.style.color = '#888'; tileLbl.style.minWidth = '60px';
+  // ── Tile selector (always shown) ─────────────────────────
+  const tileRow = document.createElement('div');
+  tileRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const tileLbl = document.createElement('label');
+  tileLbl.textContent = 'Tile:'; tileLbl.style.cssText = 'color:#888;min-width:70px;';
 
-    const tilePrev = document.createElement('canvas');
-    tilePrev.width = 32; tilePrev.height = 32;
-    tilePrev.style.cssText = 'border:1px solid #444;image-rendering:pixelated;background:#161412;width:32px;height:32px;';
+  const tilePrev = document.createElement('canvas');
+  tilePrev.width = 32; tilePrev.height = 32;
+  tilePrev.style.cssText = 'border:1px solid #444;image-rendering:pixelated;background:#161412;width:32px;height:32px;flex-shrink:0;';
 
-    tileIdInp = document.createElement('input');
-    tileIdInp.type = 'number'; tileIdInp.min = '-1'; tileIdInp.max = '135';
-    tileIdInp.value = existing.tileId;
-    tileIdInp.style.cssText = 'width:60px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+  const tileIdInp = document.createElement('input');
+  tileIdInp.type = 'number'; tileIdInp.min = '-1'; tileIdInp.max = '9999';
+  tileIdInp.value = existing ? existing.tileId : selTile;
+  tileIdInp.style.cssText = 'width:60px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
 
-    const useSelBtn = document.createElement('button');
-    useSelBtn.className = 'tbtn'; useSelBtn.textContent = 'Use selected tile';
-    useSelBtn.style.fontSize = '10px';
-    useSelBtn.onclick = () => { tileIdInp.value = selTile; updateTilePreview(); };
+  const useSelBtn = document.createElement('button');
+  useSelBtn.className = 'tbtn'; useSelBtn.textContent = 'Use selected'; useSelBtn.style.fontSize = '10px';
+  useSelBtn.onclick = () => { tileIdInp.value = selTile; updateTilePreview(); };
 
-    function updateTilePreview() {
-      const pc = tilePrev.getContext('2d');
-      pc.clearRect(0, 0, 32, 32);
-      const tid = parseInt(tileIdInp.value);
-      if (tid >= 0) {
-        const tint = tintTable[tid] || DEFAULT_TINT;
-        pc.fillStyle = tint; pc.fillRect(0, 0, 32, 32);
-        const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
-        if (baseId >= 0) {
-          const img = tileImgs[baseId];
-          if (img && img.complete && img.naturalWidth > 0) {
-            pc.save();
-            pc.globalCompositeOperation = 'multiply';
-            pc.imageSmoothingEnabled = false;
-            pc.drawImage(img, 0, 0, 16, 16, 0, 0, 32, 32);
-            pc.restore();
-          }
+  const overlayNote = document.createElement('span');
+  overlayNote.style.cssText = 'color:#555;font-size:10px;display:none;';
+  overlayNote.textContent = '→ overlay (block)';
+
+  function updateTilePreview() {
+    const pc = tilePrev.getContext('2d');
+    pc.clearRect(0, 0, 32, 32);
+    const tid = parseInt(tileIdInp.value);
+    if (tid >= 0) {
+      const tint = tintTable[tid] || DEFAULT_TINT;
+      pc.fillStyle = tint; pc.fillRect(0, 0, 32, 32);
+      const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
+      if (baseId >= 0) {
+        const img = tileImgs[baseId];
+        if (img && img.complete && img.naturalWidth > 0) {
+          pc.save(); pc.globalCompositeOperation = 'multiply'; pc.imageSmoothingEnabled = false;
+          pc.drawImage(img, 0, 0, 16, 16, 0, 0, 32, 32); pc.restore();
         }
       }
     }
-    tileIdInp.addEventListener('input', updateTilePreview);
-    updateTilePreview();
-    tileRow.append(tileLbl, tilePrev, tileIdInp, useSelBtn);
+  }
+  tileIdInp.addEventListener('input', updateTilePreview);
+  updateTilePreview();
+  tileRow.append(tileLbl, tilePrev, tileIdInp, useSelBtn, overlayNote);
+
+  // ── Template onChange: auto-fill fields ──────────────────
+  tmplSel.addEventListener('change', () => {
+    const tmpl = npcTemplates.find(t => t.id === tmplSel.value) ?? null;
+    selectedTmpl = tmpl;
+    if (tmpl) {
+      nameInp.value = tmpl.displayName;
+      tileIdInp.value = tmpl.tileId;
+      updateTilePreview();
+      portraitData = tmpl.portrait ? { ...tmpl.portrait } : null;
+      if (portraitData?.dataUrl) { tmplPorImg.src = portraitData.dataUrl; tmplPorImg.style.display = ''; }
+      else { tmplPorImg.src = ''; tmplPorImg.style.display = 'none'; }
+      overlayNote.style.display = '';
+      tmplNote.textContent = `Tile #${tmpl.tileId} placed as Overlay (block). ${tmpl.portrait ? 'Portrait attached ★' : 'No portrait.'}`;
+      tmplNote.style.color = '#3ab8dc';
+    } else {
+      selectedTmpl = null; portraitData = null;
+      tmplPorImg.src = ''; tmplPorImg.style.display = 'none';
+      overlayNote.style.display = 'none';
+      tmplNote.textContent = 'Choose a template to auto-fill name/tile and attach a portrait image.';
+      tmplNote.style.color = '#444';
+    }
+  });
+  // Pre-select if editing an NPC with a stored templateId
+  if (existing?.templateId) {
+    selectedTmpl = npcTemplates.find(t => t.id === existing.templateId) ?? null;
+    if (selectedTmpl) overlayNote.style.display = '';
   }
 
   // ── Dialog lines ─────────────────────────────────────────
@@ -1227,7 +1293,7 @@ function openNpcModal(row, col) {
   dialogLbl.textContent = 'Dialog (one line per [E] press):';
 
   const dialogTA = document.createElement('textarea');
-  dialogTA.style.cssText = 'background:#111;color:#9db;border:1px solid #2a2a2a;font-family:inherit;font-size:11px;padding:8px;resize:vertical;min-height:120px;width:100%;';
+  dialogTA.style.cssText = 'background:#111;color:#9db;border:1px solid #2a2a2a;font-family:inherit;font-size:11px;padding:8px;resize:vertical;min-height:100px;width:100%;';
   dialogTA.value = (existing?.dialog ?? ['Hello traveler.']).join('\n');
   dialogTA.placeholder = 'Hello traveler.\nStay safe out there.';
 
@@ -1244,6 +1310,8 @@ function openNpcModal(row, col) {
     const delBtn = makeBtn2('Delete NPC', '#3a1515', '#f88', () => {
       const idx = cur.npcs.indexOf(existing);
       if (idx >= 0) cur.npcs.splice(idx, 1);
+      // Remove overlay tile placed by template (if any)
+      if (overlayMap[row]?.[col] >= 0) overlayMap[row][col] = -1;
       ov.remove(); renderMap(); renderMapsList(); toast('NPC removed');
     });
     delBtn.style.marginRight = 'auto';
@@ -1254,22 +1322,37 @@ function openNpcModal(row, col) {
     makeBtn2('Cancel', '#2a2a2a', '#aaa', () => ov.remove()),
     makeBtn2(existing ? 'Save' : 'Add NPC', '#1a3a45', '#3ab8dc', () => {
       const name   = nameInp.value.trim() || 'Villager';
-      const tileId = existing
-        ? Math.max(-1, Math.min(135, parseInt(tileIdInp.value, 10) || -1))
-        : selTile;
-      const dialog = dialogTA.value.split('\n').map(s=>s.trim()).filter(Boolean);
+      const tileId = Math.max(-1, parseInt(tileIdInp.value, 10) || -1);
+      const dialog = dialogTA.value.split('\n').map(s => s.trim()).filter(Boolean);
       if (!dialog.length) dialog.push('...');
+
+      // If template selected: place tile on overlay layer (blocking)
+      if (selectedTmpl && tileId >= 0) {
+        while (overlayMap.length <= row) overlayMap.push(new Array(MAP_COLS).fill(-1));
+        overlayMap[row][col] = tileId;
+        while (typeTable.length <= tileId) typeTable.push(T.WALL);
+        typeTable[tileId] = T.OVERLAY_BLOCK;
+        while (tintTable.length <= tileId) tintTable.push(DEFAULT_TINT);
+        markMinimapDirty();
+      }
+
+      const npcData = {
+        name, tileId, dialog,
+        portrait:    portraitData ?? null,
+        templateId:  selectedTmpl?.id ?? null,
+      };
+
       if (existing) {
-        existing.name = name; existing.tileId = tileId; existing.dialog = dialog;
+        Object.assign(existing, npcData);
       } else {
-        cur.npcs.push({ id: 'npc_' + genMapId(), row, col, name, tileId, dialog });
+        cur.npcs.push({ id: 'npc_' + genMapId(), row, col, ...npcData });
       }
       ov.remove(); renderMap(); renderMapsList();
       toast(existing ? `NPC "${name}" updated` : `NPC "${name}" placed at (${row}, ${col})`);
     })
   );
 
-  box.append(h3, nameRow, ...(tileRow ? [tileRow] : []), dialogLbl, dialogTA, btns);
+  box.append(h3, tmplWrap, nameRow, tileRow, dialogLbl, dialogTA, btns);
   ov.appendChild(box); document.body.appendChild(ov);
   ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
   nameInp.focus(); nameInp.select();
@@ -2152,6 +2235,163 @@ function setZoom(z, pivotX, pivotY) {
   renderMap();
 }
 
+// ── NPC Template Modal ─────────────────────────────────────
+function openNpcTemplateModal(tmplId = null) {
+  const existing = tmplId ? npcTemplates.find(t => t.id === tmplId) : null;
+
+  const ov  = document.createElement('div'); ov.className = 'overlay';
+  const box = document.createElement('div'); box.className = 'modal';
+  box.style.minWidth = '420px';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = existing ? `Edit Template: ${existing.displayName}` : 'New NPC Template';
+  h3.style.color = '#3ab8dc';
+
+  // Working copies of mutable state
+  let curTileId  = existing?.tileId  ?? selTile;
+  let curPortrait = existing?.portrait ? { ...existing.portrait } : null;
+
+  // ── Display Name ─────────────────────────────────────────
+  const nameRow = document.createElement('div');
+  nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const nameLbl = document.createElement('label');
+  nameLbl.textContent = 'Display Name:'; nameLbl.style.cssText = 'color:#888;min-width:96px;';
+  const nameInp = document.createElement('input');
+  nameInp.type = 'text'; nameInp.value = existing?.displayName ?? '';
+  nameInp.placeholder = 'Elder, Merchant, Guard…';
+  nameInp.style.cssText = 'flex:1;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+  nameRow.append(nameLbl, nameInp);
+
+  // ── Tile ID ──────────────────────────────────────────────
+  const tileRowT = document.createElement('div');
+  tileRowT.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const tileLblT = document.createElement('label');
+  tileLblT.textContent = 'Tile ID:'; tileLblT.style.cssText = 'color:#888;min-width:96px;';
+
+  const tilePrevT = document.createElement('canvas');
+  tilePrevT.width = 32; tilePrevT.height = 32;
+  tilePrevT.style.cssText = 'border:1px solid #444;image-rendering:pixelated;background:#161412;width:32px;height:32px;flex-shrink:0;';
+
+  const tileIdInpT = document.createElement('input');
+  tileIdInpT.type = 'number'; tileIdInpT.min = '-1'; tileIdInpT.max = '9999';
+  tileIdInpT.value = curTileId;
+  tileIdInpT.style.cssText = 'width:60px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+
+  const useSelBtnT = document.createElement('button');
+  useSelBtnT.className = 'tbtn'; useSelBtnT.textContent = 'Use selected'; useSelBtnT.style.fontSize = '10px';
+  useSelBtnT.onclick = () => { tileIdInpT.value = selTile; curTileId = selTile; refreshTilePrev(); };
+
+  const typeNoteT = document.createElement('span');
+  typeNoteT.style.cssText = 'color:#555;font-size:10px;';
+  typeNoteT.textContent = 'Placed as Overlay (block)';
+
+  function refreshTilePrev() {
+    curTileId = parseInt(tileIdInpT.value) || -1;
+    const pc = tilePrevT.getContext('2d'); pc.clearRect(0, 0, 32, 32);
+    if (curTileId >= 0) {
+      pc.fillStyle = tintTable[curTileId] || DEFAULT_TINT; pc.fillRect(0, 0, 32, 32);
+      const baseId = tileBaseMap.has(curTileId) ? tileBaseMap.get(curTileId) : (curTileId < TOTAL_TILES ? curTileId : -1);
+      if (baseId >= 0) {
+        const img = tileImgs[baseId];
+        if (img?.complete && img.naturalWidth > 0) {
+          pc.save(); pc.globalCompositeOperation = 'multiply'; pc.imageSmoothingEnabled = false;
+          pc.drawImage(img, 0, 0, 16, 16, 0, 0, 32, 32); pc.restore();
+        }
+      }
+    }
+  }
+  tileIdInpT.addEventListener('input', refreshTilePrev);
+  refreshTilePrev();
+  tileRowT.append(tileLblT, tilePrevT, tileIdInpT, useSelBtnT, typeNoteT);
+
+  // ── Portrait upload ───────────────────────────────────────
+  const porHdr = document.createElement('div');
+  porHdr.style.cssText = 'color:#888;font-size:10px;margin-top:2px;';
+  porHdr.textContent = 'Portrait (optional square image — shown in game dialog box):';
+
+  const porWrap = document.createElement('div');
+  porWrap.style.cssText = 'display:flex;align-items:center;gap:10px;';
+
+  const porPrev = document.createElement('img');
+  porPrev.style.cssText = 'width:72px;height:72px;object-fit:cover;border:1px solid #444;image-rendering:pixelated;background:#0a0a0a;flex-shrink:0;';
+  if (curPortrait?.dataUrl) porPrev.src = curPortrait.dataUrl;
+  else porPrev.src = '';
+
+  const porBtns = document.createElement('div');
+  porBtns.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+
+  const uploadBtnT = document.createElement('button');
+  uploadBtnT.className = 'tbtn import-btn';
+  uploadBtnT.textContent = curPortrait ? '↺ Replace portrait' : '📂 Upload portrait';
+
+  const clearBtnT = document.createElement('button');
+  clearBtnT.className = 'tbtn danger'; clearBtnT.textContent = '✕ Remove portrait';
+  clearBtnT.style.display = curPortrait ? '' : 'none';
+
+  const porName = document.createElement('span');
+  porName.style.cssText = 'color:#444;font-size:10px;';
+  porName.textContent = curPortrait?.name ?? 'No portrait';
+
+  uploadBtnT.onclick = () => {
+    const fi = document.createElement('input'); fi.type = 'file'; fi.accept = 'image/*';
+    fi.onchange = ev => {
+      const f = ev.target.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = e2 => {
+        curPortrait = { name: f.name, dataUrl: e2.target.result };
+        porPrev.src = e2.target.result;
+        uploadBtnT.textContent = '↺ Replace portrait';
+        clearBtnT.style.display = ''; porName.textContent = f.name;
+      };
+      r.readAsDataURL(f);
+    };
+    fi.click();
+  };
+  clearBtnT.onclick = () => {
+    curPortrait = null; porPrev.src = '';
+    uploadBtnT.textContent = '📂 Upload portrait';
+    clearBtnT.style.display = 'none'; porName.textContent = 'No portrait';
+  };
+
+  porBtns.append(uploadBtnT, clearBtnT, porName);
+  porWrap.append(porPrev, porBtns);
+
+  // ── Buttons ──────────────────────────────────────────────
+  const btnsT = document.createElement('div'); btnsT.className = 'modal-btns';
+
+  if (existing) {
+    const delBtnT = makeBtn('Delete Template', '#3a1515', '#7a2525', () => {
+      const idx = npcTemplates.findIndex(t => t.id === tmplId);
+      if (idx >= 0) npcTemplates.splice(idx, 1);
+      ov.remove(); renderAssetsPanel(); toast(`Template "${existing.displayName}" deleted`);
+    });
+    delBtnT.style.marginRight = 'auto';
+    btnsT.appendChild(delBtnT);
+  }
+  btnsT.append(
+    makeBtn('Cancel', '#2a2a2a', '#444', () => ov.remove()),
+    makeBtn(existing ? 'Save' : 'Create Template', '#1a3a45', '#2e6090', () => {
+      const displayName = nameInp.value.trim();
+      if (!displayName) { toast('Display name required'); nameInp.focus(); return; }
+      const tileId2 = parseInt(tileIdInpT.value) || -1;
+      if (existing) {
+        existing.displayName = displayName;
+        existing.tileId = tileId2;
+        existing.portrait = curPortrait;
+      } else {
+        npcTemplates.push({ id: 'tmpl_' + genMapId(), displayName, tileId: tileId2, portrait: curPortrait });
+      }
+      ov.remove(); renderAssetsPanel();
+      toast(existing ? `Template "${displayName}" saved` : `Template "${displayName}" created`);
+    })
+  );
+
+  box.append(h3, nameRow, tileRowT, porHdr, porWrap, btnsT);
+  ov.appendChild(box); document.body.appendChild(ov);
+  ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
+  nameInp.focus(); nameInp.select();
+}
+
 // ── Tab ────────────────────────────────────────────────────
 // ── Assets Panel ──────────────────────────────────────────
 function renderAssetsPanel() {
@@ -2226,6 +2466,77 @@ function renderAssetsPanel() {
     row.appendChild(btnRow);
     panel.appendChild(row);
   });
+
+  // ── NPC Templates section ──────────────────────────────────
+  const sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:#2a2a2a;margin:12px 0;';
+  panel.appendChild(sep);
+
+  const tmplHdr = document.createElement('div');
+  tmplHdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+  const tmplTitle = document.createElement('span');
+  tmplTitle.style.cssText = 'flex:1;color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;';
+  tmplTitle.textContent = 'NPC Templates';
+  const newTmplBtn = document.createElement('button');
+  newTmplBtn.className = 'tbtn import-btn'; newTmplBtn.textContent = '+ New Template';
+  newTmplBtn.style.fontSize = '10px';
+  newTmplBtn.onclick = () => openNpcTemplateModal(null);
+  tmplHdr.append(tmplTitle, newTmplBtn);
+  panel.appendChild(tmplHdr);
+
+  if (npcTemplates.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'color:#3a3a3a;font-size:10px;text-align:center;padding:14px 8px;line-height:1.7;';
+    empty.textContent = 'No templates yet.\nCreate one to pre-configure NPCs with tile and portrait.';
+    panel.appendChild(empty);
+  } else {
+    npcTemplates.forEach(tmpl => {
+      const trow = document.createElement('div');
+      trow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px;margin-bottom:4px;background:#1e1e1e;border:1px solid #2a2a2a;border-radius:3px;';
+
+      // Tile mini-preview
+      const tpv = document.createElement('canvas'); tpv.width = 24; tpv.height = 24;
+      tpv.style.cssText = 'border:1px solid #333;image-rendering:pixelated;background:#161412;flex-shrink:0;';
+      if (tmpl.tileId >= 0) {
+        const pc = tpv.getContext('2d');
+        pc.fillStyle = tintTable[tmpl.tileId] || DEFAULT_TINT; pc.fillRect(0, 0, 24, 24);
+        const bid = tileBaseMap.has(tmpl.tileId) ? tileBaseMap.get(tmpl.tileId) : (tmpl.tileId < TOTAL_TILES ? tmpl.tileId : -1);
+        if (bid >= 0) {
+          const img = tileImgs[bid];
+          if (img?.complete && img.naturalWidth > 0) {
+            pc.save(); pc.globalCompositeOperation = 'multiply'; pc.imageSmoothingEnabled = false;
+            pc.drawImage(img, 0, 0, 16, 16, 0, 0, 24, 24); pc.restore();
+          }
+        }
+      }
+      trow.appendChild(tpv);
+
+      // Portrait thumbnail
+      if (tmpl.portrait?.dataUrl) {
+        const pimg = document.createElement('img');
+        pimg.src = tmpl.portrait.dataUrl;
+        pimg.style.cssText = 'width:24px;height:24px;object-fit:cover;border:1px solid #333;image-rendering:pixelated;flex-shrink:0;';
+        trow.appendChild(pimg);
+      }
+
+      // Info
+      const tinfo = document.createElement('div'); tinfo.style.cssText = 'flex:1;min-width:0;';
+      const tname = document.createElement('div');
+      tname.style.cssText = 'color:#3ab8dc;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      tname.textContent = tmpl.displayName;
+      const tsub = document.createElement('div');
+      tsub.style.cssText = 'color:#444;font-size:10px;';
+      tsub.textContent = `Tile #${tmpl.tileId}${tmpl.portrait ? ' • portrait ★' : ''}`;
+      tinfo.append(tname, tsub);
+
+      const editTBtn = document.createElement('button');
+      editTBtn.className = 'tbtn mibtn'; editTBtn.textContent = '✏'; editTBtn.title = 'Edit template';
+      editTBtn.onclick = () => openNpcTemplateModal(tmpl.id);
+
+      trow.append(tinfo, editTBtn);
+      panel.appendChild(trow);
+    });
+  }
 }
 
 // Slice a packed tileset image (any size) into 16×16 tiles and populate tileImgs[].
@@ -2445,6 +2756,7 @@ function saveFile() {
     nextCustomTileId,
     customTiles: serializeCustomTiles(),
     assets,
+    npcTemplates,
   };
   const blob = new Blob([JSON.stringify(data)], { type:'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -2465,6 +2777,7 @@ function loadWorldData(data) {
   if (data.nextCustomTileId) nextCustomTileId = data.nextCustomTileId;
   if (data.customTiles)  deserializeCustomTiles(data.customTiles);
   assets = { tileset: null, charAtlas: null, ...( data.assets || {} ) };
+  npcTemplates = Array.isArray(data.npcTemplates) ? [...data.npcTemplates] : [];
   if (assets.tileset?.dataUrl) {
     loadTilesFromSheet(assets.tileset.dataUrl, () => {
       renderPalette(); renderPreview(); renderMap();
@@ -2784,7 +3097,7 @@ document.getElementById('btn-preview').onclick = () => {
   const data = {
     version: 3, currentMapId, maps: worldMaps,
     tintTable, typeTable, customNames, nextCustomTileId,
-    customTiles: serializeCustomTiles(), assets,
+    customTiles: serializeCustomTiles(), assets, npcTemplates,
   };
   try {
     localStorage.setItem('preview_world', JSON.stringify(data));
@@ -2887,7 +3200,7 @@ function autosave() {
     const data = {
       version: 3, currentMapId, maps: worldMaps,
       tintTable, typeTable, customNames, nextCustomTileId,
-      customTiles: serializeCustomTiles(), assets,
+      customTiles: serializeCustomTiles(), assets, npcTemplates,
     };
     localStorage.setItem('editor_world', JSON.stringify(data));
     // Clean up legacy keys

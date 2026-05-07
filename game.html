@@ -883,24 +883,53 @@ let activeDialog = null;
 function drawDialog() {
   if (!activeDialog) return;
   const hs = hudScale;
+
+  // Portrait: show if image is loaded and ready
+  const por = activeDialog.portrait;
+  const hasPor = !!(por && por.complete && por.naturalWidth > 0);
+  const porSize = 80 * hs;      // portrait square size (pixels on hud canvas)
+  const porGap  = 10 * hs;      // gap between portrait and text
+  const porPad  = 10 * hs;      // portrait left/top padding inside box
+  const textOffX = hasPor ? (porPad + porSize + porGap) : 12 * hs;
+
   const dw=560*hs, dh=100*hs, dx=(VW*hs-dw)/2, dy=VH*hs-118*hs;
+
+  // Background box
   hudCtx.fillStyle='rgba(5,5,25,0.93)'; hudCtx.fillRect(dx,dy,dw,dh);
   hudCtx.strokeStyle='#7766aa'; hudCtx.lineWidth=2; hudCtx.strokeRect(dx,dy,dw,dh);
   hudCtx.strokeStyle='#4455aa'; hudCtx.lineWidth=1; hudCtx.strokeRect(dx+3,dy+3,dw-6,dh-6);
+
+  // Portrait image
+  if (hasPor) {
+    const px = dx + porPad, py = dy + porPad;
+    // Subtle border around portrait
+    hudCtx.strokeStyle = '#7766aa'; hudCtx.lineWidth = 1;
+    hudCtx.strokeRect(px - 1, py - 1, porSize + 2, porSize + 2);
+    hudCtx.imageSmoothingEnabled = true;
+    hudCtx.drawImage(por, px, py, porSize, porSize);
+    hudCtx.imageSmoothingEnabled = false;
+  }
+
+  // NPC name
   hudCtx.fillStyle='#ffcc44'; hudCtx.font=`bold ${hF(12)}px Georgia`;
-  hudCtx.fillText(activeDialog.npcName, dx+12, dy+20*hs);
+  hudCtx.fillText(activeDialog.npcName, dx + textOffX, dy + 20*hs);
+
+  // Dialog text with word-wrap
   hudCtx.fillStyle='#ddddff'; hudCtx.font=`${hF(12)}px Georgia`;
-  const words=activeDialog.lines[activeDialog.index].split(' ');
-  let row='',rows=[];
+  const maxW = dw - textOffX - 14*hs;
+  const words = activeDialog.lines[activeDialog.index].split(' ');
+  let row='', rows=[];
   for (const w of words) {
-    const t=row+(row?' ':'')+w;
-    if (hudCtx.measureText(t).width>dw-26){rows.push(row);row=w;}else row=t;
+    const t = row + (row ? ' ' : '') + w;
+    if (hudCtx.measureText(t).width > maxW) { rows.push(row); row = w; } else row = t;
   }
   rows.push(row);
-  rows.forEach((r,i)=>hudCtx.fillText(r,dx+12,dy+38*hs+i*17*hs));
+  rows.forEach((r, i) => hudCtx.fillText(r, dx + textOffX, dy + 38*hs + i*17*hs));
+
+  // Continue / close hint
   hudCtx.fillStyle='#9988cc'; hudCtx.font=`${hF(10)}px Georgia`; hudCtx.textAlign='right';
-  const more=activeDialog.index<activeDialog.lines.length-1;
-  hudCtx.fillText(more?'[E] Continue':'[E] Close', dx+dw-8, dy+dh-6);
+  const more = activeDialog.index < activeDialog.lines.length - 1;
+  hudCtx.fillText(more ? '[E] Continue' : '[E] Close', dx + dw - 8, dy + dh - 6);
   hudCtx.textAlign='left';
 }
 
@@ -954,7 +983,7 @@ function updatePlayer(dt) {
       let talked = false;
       for (const npc of npcs)
         if (dist(player.x,player.y,npc.x,npc.y) < 44 * TILE_SCALE) {
-          activeDialog={lines:npc.dialog,index:0,npcName:npc.name}; talked=true; break;
+          activeDialog={lines:npc.dialog,index:0,npcName:npc.name,portrait:npc.portraitImg??null}; talked=true; break;
         }
       if (!talked) checkInteractTriggers();
     }
@@ -1202,14 +1231,24 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
 
   // Clear entities; load NPCs and triggers from world map data
   enemies = [];
-  npcs = (m.npcs || []).map(n => ({
-    x: (n.col + 0.5) * TS,
-    y: (n.row + 0.5) * TS,
-    name:   n.name   ?? 'Villager',
-    tileId: n.tileId ?? -1,
-    dialog: n.dialog ?? ['...'],
-    isElder: false,
-  }));
+  npcs = (m.npcs || []).map(n => {
+    const npc = {
+      x: (n.col + 0.5) * TS,
+      y: (n.row + 0.5) * TS,
+      name:        n.name   ?? 'Villager',
+      tileId:      n.tileId ?? -1,
+      dialog:      n.dialog ?? ['...'],
+      portraitImg: null,
+      isElder:     false,
+    };
+    // Pre-load portrait image so it's ready when dialog opens
+    if (n.portrait?.dataUrl) {
+      const img = new Image();
+      img.src = n.portrait.dataUrl;
+      npc.portraitImg = img;
+    }
+    return npc;
+  });
   triggers = (m.triggers || []).map(t => ({ ...t }));
   firedTriggers = new Set(); // reset one-shot tracking on every map load
   victoryDone = true; // no victory condition without enemies
