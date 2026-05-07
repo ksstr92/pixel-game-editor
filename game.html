@@ -1639,6 +1639,7 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
       patrolIdx:    0,
       moving:       false,
       facingRight:  true,
+      radius:       Math.round(TS * 0.35),  // needed by resolveCollision during patrol
     };
     // Pre-load portrait image so it's ready when dialog opens
     if (n.portrait?.dataUrl) {
