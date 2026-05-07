@@ -353,6 +353,10 @@ const mouse = { wx:0, wy:0, justDown:false };
 document.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (!gameStarted) startGame();
+  if (gameStarted) {
+    if (e.code === 'KeyI') showInventory = !showInventory;
+    if (e.code === 'Escape') showInventory = false;
+  }
 });
 document.addEventListener('keyup', e => {
   keys[e.code] = false;
@@ -367,6 +371,11 @@ canvas.addEventListener('mousemove', e => {
   const r = canvas.getBoundingClientRect();
   mouse.wx = (e.clientX - r.left) * (VW / r.width)  + cam.x;
   mouse.wy = (e.clientY - r.top)  * (VH / r.height) + cam.y;
+});
+document.addEventListener('mousemove', e => {
+  const hr = hudCanvas.getBoundingClientRect();
+  hudMouseX = e.clientX - hr.left;
+  hudMouseY = e.clientY - hr.top;
 });
 canvas.addEventListener('mousedown', e => {
   if (e.button === 0) mouse.justDown = true;
@@ -934,6 +943,197 @@ function drawDialog() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// ITEMS (world rendering + inventory UI)
+// ════════════════════════════════════════════════════════════════════════════
+function drawMapItems() {
+  if (!monoReady || !worldData) return;
+  const now = Date.now();
+  const mc  = monoCol();
+
+  for (const item of mapItems) {
+    if (item.collected) continue;
+    const sx = item.x - cam.x, sy = item.y - cam.y;
+    if (sx < -TS || sx > VW + TS || sy < -TS || sy > VH + TS) continue;
+
+    // Pulsing glow
+    const pulse = 0.45 + 0.25 * Math.sin(now * 0.0045 + item.col * 1.7 + item.row * 2.3);
+    const glowR = TS * 0.6;
+    const grad  = ctx.createRadialGradient(sx, sy, 0, sx, sy, glowR);
+    grad.addColorStop(0,   `rgba(255,220,60,${0.4 * pulse})`);
+    grad.addColorStop(0.5, `rgba(200,140,10,${0.15 * pulse})`);
+    grad.addColorStop(1,   'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(sx - glowR, sy - glowR, glowR * 2, glowR * 2);
+
+    // Tile sprite (same composite as NPCs)
+    const tid = item.tileId ?? -1;
+    if (tid >= 0) {
+      const ct     = worldData?.customTiles?.[tid];
+      const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : tid;
+      if (baseId >= 0) {
+        const dx = Math.round(sx - TS / 2), dy = Math.round(sy - TS / 2);
+        _sprCtx.clearRect(0, 0, TS, TS);
+        _sprCtx.drawImage(ctx.canvas, dx, dy, TS, TS, 0, 0, TS, TS);
+        _sprCtx.globalCompositeOperation = 'multiply';
+        _sprCtx.imageSmoothingEnabled = false;
+        _sprCtx.drawImage(monoSheet, (baseId % mc) * 16, Math.floor(baseId / mc) * 16, 16, 16, 0, 0, TS, TS);
+        _sprCtx.globalCompositeOperation = 'source-over';
+        ctx.save(); ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(_sprBuf, dx, dy);
+        ctx.restore();
+      }
+    }
+
+    // [E] prompt for interact items
+    if (item.pickup === 'interact' && dist(player.x, player.y, item.x, item.y) < 52 * TILE_SCALE) {
+      const hs = hudScale;
+      hudCtx.fillStyle = '#ffffaa';
+      hudCtx.font = `${hF(9)}px Georgia`;
+      hudCtx.textAlign = 'center';
+      hudCtx.fillText(`[E] ${item.name}`, hX(sx), hY(sy - TS * 0.65));
+      hudCtx.textAlign = 'left';
+    }
+  }
+}
+
+function drawInventory() {
+  if (!showInventory) return;
+  const hs = hudScale;
+
+  const COLS  = 5;
+  const SLOT  = 52 * hs;
+  const GAP   = 6  * hs;
+  const PAD   = 14 * hs;
+  const TIT_H = 30 * hs;
+  const DESC_H= 54 * hs;
+  const ROWS  = Math.max(1, Math.min(4, Math.ceil(Math.max(inventory.length, 1) / COLS)));
+
+  const panW = PAD * 2 + COLS * SLOT + (COLS - 1) * GAP;
+  const panH = PAD * 2 + TIT_H + ROWS * SLOT + (ROWS - 1) * GAP + DESC_H;
+  const panX = (hudCanvas.width  - panW) / 2;
+  const panY = (hudCanvas.height - panH) / 2;
+
+  // Dim backdrop
+  hudCtx.fillStyle = 'rgba(0,0,0,0.6)';
+  hudCtx.fillRect(0, 0, hudCanvas.width, hudCanvas.height);
+
+  // Panel background
+  hudCtx.fillStyle = 'rgba(5,5,25,0.97)';
+  hudCtx.fillRect(panX, panY, panW, panH);
+  hudCtx.strokeStyle = '#7766aa'; hudCtx.lineWidth = 2;
+  hudCtx.strokeRect(panX, panY, panW, panH);
+  hudCtx.strokeStyle = '#3a3a66'; hudCtx.lineWidth = 1;
+  hudCtx.strokeRect(panX + 3, panY + 3, panW - 6, panH - 6);
+
+  // Title
+  hudCtx.fillStyle = '#ccaaff';
+  hudCtx.font = `bold ${hF(13)}px Georgia`;
+  hudCtx.textAlign = 'center';
+  hudCtx.fillText('Inventory', panX + panW / 2, panY + PAD + TIT_H * 0.65);
+  hudCtx.fillStyle = '#9988cc'; hudCtx.font = `${hF(9)}px Georgia`;
+  hudCtx.textAlign = 'right';
+  hudCtx.fillText('[I] Close', panX + panW - PAD, panY + PAD + TIT_H * 0.65);
+  hudCtx.textAlign = 'left';
+
+  // Title divider
+  const divY = panY + PAD + TIT_H;
+  hudCtx.strokeStyle = '#3a3a5a'; hudCtx.lineWidth = 1;
+  hudCtx.beginPath(); hudCtx.moveTo(panX + PAD, divY); hudCtx.lineTo(panX + panW - PAD, divY); hudCtx.stroke();
+
+  // Item slots
+  const slotBaseY = divY + GAP;
+  const mc = worldData ? monoCol() : 17;
+  let hoveredItem = null;
+
+  if (inventory.length === 0) {
+    hudCtx.fillStyle = '#333355'; hudCtx.font = `${hF(11)}px Georgia`;
+    hudCtx.textAlign = 'center';
+    hudCtx.fillText('No items collected yet', panX + panW / 2, slotBaseY + SLOT * 0.58);
+    hudCtx.textAlign = 'left';
+  } else {
+    for (let i = 0; i < Math.min(inventory.length, COLS * 4); i++) {
+      const item = inventory[i];
+      const col  = i % COLS;
+      const row  = Math.floor(i / COLS);
+      const sx   = panX + PAD + col * (SLOT + GAP);
+      const sy   = slotBaseY + row * (SLOT + GAP);
+      const isHov = hudMouseX >= sx && hudMouseX < sx + SLOT &&
+                    hudMouseY >= sy && hudMouseY < sy + SLOT;
+      if (isHov) hoveredItem = item;
+
+      // Slot bg
+      hudCtx.fillStyle = isHov ? 'rgba(119,102,170,0.35)' : 'rgba(20,20,40,0.8)';
+      hudCtx.fillRect(sx, sy, SLOT, SLOT);
+      hudCtx.strokeStyle = isHov ? '#9988cc' : '#3a3a5a'; hudCtx.lineWidth = 1;
+      hudCtx.strokeRect(sx, sy, SLOT, SLOT);
+
+      // Tile icon
+      if (item.tileId >= 0 && monoReady && worldData) {
+        const iconM  = 7 * hs;
+        const iconSz = SLOT - iconM * 2;
+        const ct     = worldData?.customTiles?.[item.tileId];
+        const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : item.tileId;
+        if (baseId >= 0) {
+          const tint = worldData.tintTable?.[item.tileId];
+          if (tint) {
+            hudCtx.fillStyle = tint;
+            hudCtx.fillRect(sx + iconM, sy + iconM, iconSz, iconSz);
+          }
+          hudCtx.save();
+          hudCtx.globalCompositeOperation = tint ? 'multiply' : 'source-over';
+          hudCtx.imageSmoothingEnabled = false;
+          hudCtx.drawImage(monoSheet, (baseId % mc) * 16, Math.floor(baseId / mc) * 16, 16, 16,
+                           sx + iconM, sy + iconM, iconSz, iconSz);
+          hudCtx.restore();
+        }
+      } else {
+        // Fallback diamond
+        hudCtx.fillStyle = '#ffcc44';
+        hudCtx.font = `${hF(20)}px serif`;
+        hudCtx.textAlign = 'center'; hudCtx.textBaseline = 'middle';
+        hudCtx.fillText('◆', sx + SLOT / 2, sy + SLOT / 2);
+        hudCtx.textAlign = 'left'; hudCtx.textBaseline = 'alphabetic';
+      }
+
+      // Count badge
+      if (item.count > 1) {
+        const br = 9 * hs;
+        const bx = sx + SLOT - br - 2 * hs, by = sy + SLOT - br - 2 * hs;
+        hudCtx.fillStyle = '#1a1a3a';
+        hudCtx.beginPath(); hudCtx.arc(bx, by, br, 0, Math.PI * 2); hudCtx.fill();
+        hudCtx.strokeStyle = '#7766aa'; hudCtx.lineWidth = 0.8;
+        hudCtx.beginPath(); hudCtx.arc(bx, by, br, 0, Math.PI * 2); hudCtx.stroke();
+        hudCtx.fillStyle = '#ddccff';
+        hudCtx.font = `bold ${hF(8)}px Georgia`;
+        hudCtx.textAlign = 'center'; hudCtx.textBaseline = 'middle';
+        hudCtx.fillText(item.count, bx, by);
+        hudCtx.textAlign = 'left'; hudCtx.textBaseline = 'alphabetic';
+      }
+    }
+  }
+
+  // Description strip
+  const descY = panY + panH - PAD - DESC_H;
+  hudCtx.strokeStyle = '#3a3a5a'; hudCtx.lineWidth = 1;
+  hudCtx.beginPath(); hudCtx.moveTo(panX + PAD, descY); hudCtx.lineTo(panX + panW - PAD, descY); hudCtx.stroke();
+
+  if (hoveredItem) {
+    hudCtx.fillStyle = '#ffcc44';
+    hudCtx.font = `bold ${hF(11)}px Georgia`;
+    hudCtx.fillText(hoveredItem.name, panX + PAD, descY + 18 * hs);
+    if (hoveredItem.description) {
+      hudCtx.fillStyle = '#9988cc'; hudCtx.font = `${hF(10)}px Georgia`;
+      hudCtx.fillText(hoveredItem.description, panX + PAD, descY + 36 * hs);
+    }
+  } else {
+    hudCtx.fillStyle = '#333355'; hudCtx.font = `${hF(10)}px Georgia`;
+    hudCtx.textAlign = 'center';
+    hudCtx.fillText('Hover an item to see details', panX + panW / 2, descY + 28 * hs);
+    hudCtx.textAlign = 'left';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // HUD
 // ════════════════════════════════════════════════════════════════════════════
 function drawHUD() {
@@ -952,8 +1152,18 @@ const player = {
   facingRight:true, dead:false, kills:0,
 };
 
+function collectItem(item) {
+  item.collected = true;
+  const slot = inventory.find(s => s.name === item.name && s.tileId === item.tileId);
+  if (slot) slot.count++;
+  else inventory.push({ name: item.name, tileId: item.tileId, description: item.description || '', count: 1 });
+  spawnFloat(item.x - cam.x, item.y - cam.y - TS * 0.6, `+${item.name}`, '#ffcc44');
+}
+
 function updatePlayer(dt) {
   if (player.dead) return;
+  if (showInventory) return; // freeze player while inventory is open
+
   player.hurtTimer   = Math.max(0,player.hurtTimer-dt);
   player.invincTimer = Math.max(0,player.invincTimer-dt);
 
@@ -969,7 +1179,18 @@ function updatePlayer(dt) {
   const np=resolveCollision(player,player.x+mx*dt,player.y+my*dt);
   player.x=np.x; player.y=np.y;
 
-  // Talk
+  // Auto-collect items (walk-over)
+  if (!activeDialog) {
+    const pr = Math.floor(player.y / TS);
+    const pc = Math.floor(player.x / TS);
+    for (const item of mapItems) {
+      if (!item.collected && item.pickup === 'auto' && item.row === pr && item.col === pc) {
+        collectItem(item);
+      }
+    }
+  }
+
+  // Talk / interact
   if (keys['KeyE'] && !keysHeld['KeyE']) {
     keysHeld['KeyE']=true;
     if (activeDialog) {
@@ -980,12 +1201,21 @@ function updatePlayer(dt) {
         cb?.();
       }
     } else {
-      let talked = false;
-      for (const npc of npcs)
-        if (dist(player.x,player.y,npc.x,npc.y) < 44 * TILE_SCALE) {
-          activeDialog={lines:npc.dialog,index:0,npcName:npc.name,portrait:npc.portraitImg??null}; talked=true; break;
+      let acted = false;
+      // Interact-pickup items (higher priority than NPCs)
+      for (const item of mapItems) {
+        if (!item.collected && item.pickup === 'interact' && dist(player.x, player.y, item.x, item.y) < 52 * TILE_SCALE) {
+          collectItem(item); acted = true; break;
         }
-      if (!talked) checkInteractTriggers();
+      }
+      // NPC talk
+      if (!acted) {
+        for (const npc of npcs)
+          if (dist(player.x,player.y,npc.x,npc.y) < 44 * TILE_SCALE) {
+            activeDialog={lines:npc.dialog,index:0,npcName:npc.name,portrait:npc.portraitImg??null}; acted=true; break;
+          }
+      }
+      if (!acted) checkInteractTriggers();
     }
   }
 }
@@ -1057,6 +1287,12 @@ let triggers = [];
 let firedTriggers  = new Set();
 let triggerQueue   = [];   // remaining events for the active trigger
 let camPan         = null; // active camera pan state
+
+// ── Inventory ─────────────────────────────────────────────
+let inventory     = [];   // [{ name, tileId, description, count }]
+let mapItems      = [];   // items placed on the current map
+let showInventory = false;
+let hudMouseX = 0, hudMouseY = 0; // mouse position in hud canvas pixels
 
 // Ease-in-out curve (0→1)
 const easeInOut = t => t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
@@ -1253,6 +1489,14 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
   firedTriggers = new Set(); // reset one-shot tracking on every map load
   victoryDone = true; // no victory condition without enemies
 
+  // Load map items (respawn fresh each visit)
+  mapItems = (m.items || []).map(it => ({
+    ...it,
+    x: (it.col + 0.5) * TS,
+    y: (it.row + 0.5) * TS,
+    collected: false,
+  }));
+
   // Snap camera immediately
   cam.x = clamp(player.x - VW/2, 0, MAP_COLS*TS - VW);
   cam.y = clamp(player.y - VH/2, 0, MAP_ROWS*TS - VH);
@@ -1387,6 +1631,7 @@ function gameLoop(ts) {
 
   drawMap();
   drawTorches();
+  drawMapItems();
 
   // Shadows
   drawShadow(player.x,player.y,player.radius);
@@ -1427,6 +1672,7 @@ function gameLoop(ts) {
   drawParticles();
   drawFloats();
   drawDialog();
+  drawInventory();
   drawHUD();
 
   // ── Map transition black overlay ──────────────────────────────────────────

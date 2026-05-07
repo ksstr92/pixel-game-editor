@@ -382,12 +382,14 @@ select.type-sel {
     <option value="exit">🚪 Waypoint [X]</option>
     <option value="spawn">⚑ Spawn [S]</option>
     <option value="npc">👤 NPC [N]</option>
+    <option value="item">🎒 Item [M]</option>
   </select>
   <button class="tbtn" id="btn-trigger" title="Place Trigger [T]">⚡ Trigger</button>
   <!-- hidden tool buttons kept for setTool() active-state tracking -->
   <button class="tbtn" id="btn-exit"  style="display:none">🚪 Waypoint</button>
   <button class="tbtn" id="btn-spawn" style="display:none">⚑ Spawn</button>
   <button class="tbtn" id="btn-npc"   style="display:none">👤 NPC</button>
+  <button class="tbtn" id="btn-item"  style="display:none">🎒 Item</button>
   <button class="tbtn" id="btn-maps"    title="Manage maps">🗺 Maps</button>
   <div class="sep"></div>
   <span style="color:#555;">Zoom:</span>
@@ -842,7 +844,7 @@ function createNewMap(name) {
     newTM.push(new Array(MAP_COLS).fill(-1));
     newOM.push(new Array(MAP_COLS).fill(-1));
   }
-  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, overlayMap: newOM, exits: [], npcs: [], triggers: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } });
+  worldMaps.push({ id, name: name || ('Map ' + (worldMaps.length + 1)), cols: MAP_COLS, rows: MAP_ROWS, tileMap: newTM, overlayMap: newOM, exits: [], npcs: [], triggers: [], items: [], spawn: { row: Math.floor(MAP_ROWS/2), col: Math.floor(MAP_COLS/2) } });
   return id;
 }
 
@@ -891,6 +893,7 @@ function duplicateMap(id) {
                    exits:     (src.exits||[]).map(e=>({...e, id:'exit_'+genMapId()})),
                    npcs:      (src.npcs||[]).map(n=>({...n, id:'npc_'+genMapId()})),
                    triggers:  (src.triggers||[]).map(t=>({...t, id:'trig_'+genMapId()})),
+                   items:     (src.items||[]).map(it=>({...it, id:'item_'+genMapId()})),
                    spawn: src.spawn ? {...src.spawn} : undefined };
   const idx = worldMaps.findIndex(m => m.id === id);
   worldMaps.splice(idx + 1, 0, newMap);
@@ -1038,6 +1041,33 @@ function renderMapsList() {
 
         trigEl.append(lbl3, editBtnT, delBtnT);
         list.appendChild(trigEl);
+      });
+    }
+
+    // ── Items list under the active map ──────────────────
+    if (m.id === currentMapId && m.items?.length) {
+      m.items.forEach(item => {
+        const itemEl = document.createElement('div');
+        itemEl.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 6px 3px 18px;font-size:10px;border-left:2px solid #5a5a00;margin-bottom:2px;';
+
+        const lbl4 = document.createElement('span');
+        lbl4.style.cssText = 'flex:1;color:#cccc44;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;';
+        lbl4.textContent = `🎒 ${item.name} (${item.row},${item.col}) ${item.pickup==='interact'?'[E]':'auto'}`;
+        lbl4.title = `Item "${item.name}" at (${item.row},${item.col}) — ${item.description || 'no description'}`;
+
+        const editBtnI = document.createElement('button');
+        editBtnI.className = 'tbtn mibtn'; editBtnI.textContent = '✏'; editBtnI.title = 'Edit Item';
+        editBtnI.onclick = () => { setTool('item'); openItemModal(item.row, item.col); };
+
+        const delBtnI = document.createElement('button');
+        delBtnI.className = 'tbtn mibtn danger'; delBtnI.textContent = '✕'; delBtnI.title = 'Delete Item';
+        delBtnI.onclick = () => {
+          const idx = m.items.indexOf(item);
+          if (idx >= 0) { m.items.splice(idx, 1); renderMapsList(); renderMap(); }
+        };
+
+        itemEl.append(lbl4, editBtnI, delBtnI);
+        list.appendChild(itemEl);
       });
     }
   });
@@ -1554,6 +1584,197 @@ function renderTriggerOverlays() {
   });
 }
 
+// ── Item overlays ──────────────────────────────────────────
+
+function renderItemOverlays() {
+  const cur = worldMaps.find(m => m.id === currentMapId);
+  if (!cur?.items?.length) return;
+  const ts  = tileSize();
+  const now = Date.now();
+
+  cur.items.forEach(item => {
+    const dx = Math.round(item.col * ts - camX);
+    const dy = Math.round(item.row * ts - camY);
+    if (dx + ts < 0 || dx > mapCanvas.width || dy + ts < 0 || dy > mapCanvas.height) return;
+
+    // Pulsing gold highlight
+    const pulse = 0.18 + 0.08 * Math.sin(now * 0.004 + item.col * 1.7 + item.row * 2.3);
+    mapCtx.fillStyle = `rgba(255, 200, 30, ${pulse})`;
+    mapCtx.fillRect(dx, dy, ts, ts);
+    mapCtx.strokeStyle = '#cccc44';
+    mapCtx.lineWidth = Math.max(1, ts * 0.05);
+    mapCtx.strokeRect(dx + 1, dy + 1, ts - 2, ts - 2);
+
+    // Draw tile icon
+    if (ts >= 10) {
+      mapCtx.save();
+      mapCtx.imageSmoothingEnabled = false;
+      const tid = item.tileId ?? -1;
+      const baseId = tid >= 0
+        ? (tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1))
+        : -1;
+      const img = baseId >= 0 ? tileImgs[baseId] : null;
+      if (img?.complete && img.naturalWidth > 0) {
+        mapCtx.globalAlpha = 0.88;
+        mapCtx.fillStyle = tintTable[tid] || DEFAULT_TINT;
+        mapCtx.fillRect(dx + ts*0.15, dy + ts*0.15, ts*0.7, ts*0.7);
+        mapCtx.globalCompositeOperation = 'multiply';
+        mapCtx.drawImage(img, 0, 0, 16, 16, dx + ts*0.15, dy + ts*0.15, ts*0.7, ts*0.7);
+      } else {
+        const fs = Math.min(ts * 0.38, 13);
+        mapCtx.fillStyle = '#cccc44';
+        mapCtx.font = `bold ${fs}px monospace`;
+        mapCtx.textAlign = 'center'; mapCtx.textBaseline = 'middle';
+        mapCtx.fillText('◆', dx + ts/2, dy + ts/2);
+        mapCtx.textAlign = 'left'; mapCtx.textBaseline = 'alphabetic';
+      }
+      mapCtx.restore();
+    }
+
+    // Pickup mode badge
+    if (ts >= 14) {
+      const fs = Math.min(ts * 0.2, 9);
+      mapCtx.save();
+      mapCtx.font = `bold ${fs}px monospace`;
+      mapCtx.fillStyle = '#aaaa00';
+      mapCtx.textAlign = 'right'; mapCtx.textBaseline = 'bottom';
+      mapCtx.fillText(item.pickup === 'interact' ? 'E' : '★', dx + ts - 2, dy + ts - 1);
+      mapCtx.textAlign = 'left'; mapCtx.textBaseline = 'alphabetic';
+      mapCtx.restore();
+    }
+
+    // Name label
+    if (ts >= 24 && item.name) {
+      const fs = Math.min(ts * 0.22, 11);
+      mapCtx.save();
+      mapCtx.font = `${fs}px monospace`;
+      mapCtx.textAlign = 'center';
+      const tw = mapCtx.measureText(item.name).width;
+      mapCtx.fillStyle = 'rgba(0,0,0,0.7)';
+      mapCtx.fillRect(dx + ts/2 - tw/2 - 2, dy - fs - 4, tw + 4, fs + 4);
+      mapCtx.fillStyle = '#ffee88';
+      mapCtx.fillText(item.name, dx + ts/2, dy - 4);
+      mapCtx.restore();
+    }
+  });
+}
+
+// ── Item modal ─────────────────────────────────────────────
+
+function openItemModal(row, col) {
+  const cur = worldMaps.find(m => m.id === currentMapId);
+  if (!cur) return;
+  if (!cur.items) cur.items = [];
+
+  const existing = cur.items.find(it => +it.row === +row && +it.col === +col);
+
+  const ov  = document.createElement('div'); ov.className = 'overlay';
+  const box = document.createElement('div'); box.className = 'modal';
+  box.style.minWidth = '400px';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = existing ? `Edit Item (${row}, ${col})` : `Place Item at (${row}, ${col})`;
+  h3.style.color = '#ffcc44';
+
+  // ── Name ─────────────────────────────────────────────────
+  const nameRow = document.createElement('div');
+  nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const nameLbl = document.createElement('label');
+  nameLbl.textContent = 'Name:'; nameLbl.style.cssText = 'color:#888;min-width:80px;';
+  const nameInp = document.createElement('input');
+  nameInp.type = 'text'; nameInp.value = existing?.name ?? 'Potion';
+  nameInp.style.cssText = 'flex:1;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+  nameRow.append(nameLbl, nameInp);
+
+  // ── Tile selector ────────────────────────────────────────
+  const tileRow = document.createElement('div');
+  tileRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const tileLbl = document.createElement('label');
+  tileLbl.textContent = 'Tile:'; tileLbl.style.cssText = 'color:#888;min-width:80px;';
+  const tilePrev = document.createElement('canvas');
+  tilePrev.width = 32; tilePrev.height = 32;
+  tilePrev.style.cssText = 'border:1px solid #444;image-rendering:pixelated;background:#161412;width:32px;height:32px;flex-shrink:0;';
+  const tileIdInp = document.createElement('input');
+  tileIdInp.type = 'number'; tileIdInp.min = '-1'; tileIdInp.max = '9999';
+  tileIdInp.value = existing ? existing.tileId : selTile;
+  tileIdInp.style.cssText = 'width:60px;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+  const useSelBtnI = document.createElement('button');
+  useSelBtnI.className = 'tbtn'; useSelBtnI.textContent = 'Use selected'; useSelBtnI.style.fontSize = '10px';
+  useSelBtnI.onclick = () => { tileIdInp.value = selTile; refreshItemPrev(); };
+  function refreshItemPrev() {
+    const pc = tilePrev.getContext('2d'); pc.clearRect(0,0,32,32);
+    const tid = parseInt(tileIdInp.value);
+    if (tid >= 0) {
+      pc.fillStyle = tintTable[tid] || DEFAULT_TINT; pc.fillRect(0,0,32,32);
+      const baseId = tileBaseMap.has(tid) ? tileBaseMap.get(tid) : (tid < TOTAL_TILES ? tid : -1);
+      if (baseId >= 0) {
+        const img = tileImgs[baseId];
+        if (img?.complete && img.naturalWidth > 0) {
+          pc.save(); pc.globalCompositeOperation='multiply'; pc.imageSmoothingEnabled=false;
+          pc.drawImage(img,0,0,16,16,0,0,32,32); pc.restore();
+        }
+      }
+    }
+  }
+  tileIdInp.addEventListener('input', refreshItemPrev); refreshItemPrev();
+  tileRow.append(tileLbl, tilePrev, tileIdInp, useSelBtnI);
+
+  // ── Description ──────────────────────────────────────────
+  const descLbl = document.createElement('div');
+  descLbl.style.cssText = 'color:#888;font-size:10px;margin-top:4px;';
+  descLbl.textContent = 'Description (shown in inventory hover):';
+  const descInp = document.createElement('input');
+  descInp.type = 'text'; descInp.value = existing?.description ?? '';
+  descInp.placeholder = 'Restores health when used.';
+  descInp.style.cssText = 'background:#111;color:#fc8;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;width:100%;box-sizing:border-box;';
+
+  // ── Pickup mode ──────────────────────────────────────────
+  const pickRow = document.createElement('div');
+  pickRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:2px;';
+  const pickLbl = document.createElement('label');
+  pickLbl.textContent = 'Pickup:'; pickLbl.style.cssText = 'color:#888;min-width:80px;';
+  const pickSel = document.createElement('select'); pickSel.className = 'type-sel';
+  [['auto','🚶 Auto (walk over)'],['interact','[E] Interact']].forEach(([v,l]) => {
+    const o = document.createElement('option'); o.value = v; o.textContent = l;
+    if ((existing?.pickup ?? 'auto') === v) o.selected = true;
+    pickSel.appendChild(o);
+  });
+  pickRow.append(pickLbl, pickSel);
+
+  // ── Buttons ──────────────────────────────────────────────
+  const btns = document.createElement('div'); btns.className = 'modal-btns';
+  if (existing) {
+    const delBtnI2 = makeBtn('Delete Item', '#3a1515', '#7a2525', () => {
+      const idx = cur.items.indexOf(existing);
+      if (idx >= 0) cur.items.splice(idx, 1);
+      ov.remove(); renderMap(); renderMapsList(); toast('Item removed');
+    });
+    delBtnI2.style.marginRight = 'auto';
+    btns.appendChild(delBtnI2);
+  }
+  btns.append(
+    makeBtn('Cancel', '#2a2a2a', '#444', () => ov.remove()),
+    makeBtn(existing ? 'Save' : 'Place Item', '#2a2800', '#888800', () => {
+      const name = nameInp.value.trim() || 'Item';
+      const tileId = Math.max(-1, parseInt(tileIdInp.value,10)||0);
+      const description = descInp.value.trim();
+      const pickup = pickSel.value;
+      if (existing) {
+        Object.assign(existing, { name, tileId, description, pickup });
+      } else {
+        cur.items.push({ id: 'item_'+genMapId(), row, col, name, tileId, description, pickup });
+      }
+      ov.remove(); renderMap(); renderMapsList();
+      toast(existing ? `Item "${name}" updated` : `Item "${name}" placed at (${row}, ${col})`);
+    })
+  );
+
+  box.append(h3, nameRow, tileRow, descLbl, descInp, pickRow, btns);
+  ov.appendChild(box); document.body.appendChild(ov);
+  ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
+  nameInp.focus(); nameInp.select();
+}
+
 // ── Trigger modal ─────────────────────────────────────────
 
 function openTriggerModal(row, col) {
@@ -1856,6 +2077,12 @@ function renderMinimap() {
       mmCtx.fillRect(t.col*MM_CELL, t.row*MM_CELL, MM_CELL+1, MM_CELL+1));
   }
 
+  // Item dots (yellow)
+  if (cur?.items?.length) {
+    mmCtx.fillStyle = '#cccc44';
+    cur.items.forEach(it => mmCtx.fillRect(it.col*MM_CELL, it.row*MM_CELL, MM_CELL+1, MM_CELL+1));
+  }
+
   // Spawn dot (gold, slightly larger)
   if (cur?.spawn) {
     mmCtx.fillStyle = '#ffd060';
@@ -2062,11 +2289,12 @@ function renderMap() {
     }
   }
 
-  // Overlays: spawn (gold), exits (green), NPCs (cyan), triggers (orange)
+  // Overlays: spawn, exits, NPCs, triggers, items
   renderSpawnOverlay();
   renderExitOverlays();
   renderNpcOverlays();
   renderTriggerOverlays();
+  renderItemOverlays();
 
   // Hover highlight
   if (hoverCell.r >= 0 && hoverCell.c >= 0 &&
@@ -2134,10 +2362,12 @@ function paint(r, c) {
       const prevN = cur.npcs?.length ?? 0;
       const prevE = cur.exits?.length ?? 0;
       const prevT = cur.triggers?.length ?? 0;
+      const prevI = cur.items?.length ?? 0;
       cur.npcs     = (cur.npcs     || []).filter(n => !(+n.row === r && +n.col === c));
       cur.exits    = (cur.exits    || []).filter(e => !(e.fromRow === r && e.fromCol === c));
       cur.triggers = (cur.triggers || []).filter(t => !(+t.row === r && +t.col === c));
-      if (prevN !== cur.npcs.length || prevE !== cur.exits.length || prevT !== cur.triggers.length)
+      cur.items    = (cur.items    || []).filter(it => !(+it.row === r && +it.col === c));
+      if (prevN !== cur.npcs.length || prevE !== cur.exits.length || prevT !== cur.triggers.length || prevI !== (cur.items?.length ?? 0))
         renderMapsList();
     }
   }
@@ -2213,7 +2443,7 @@ function initMap(fill = -1) {
 // ── Tool / zoom ────────────────────────────────────────────
 function setTool(t) {
   tool = t;
-  ['paint','erase','fill','pick','select','exit','spawn','npc','trigger'].forEach(n =>
+  ['paint','erase','fill','pick','select','exit','spawn','npc','item','trigger'].forEach(n =>
     document.getElementById('btn-'+n)?.classList.toggle('active', n === t)
   );
   mapCanvas.style.cursor = t === 'fill'   ? 'cell'
@@ -2769,7 +2999,7 @@ function loadFile() { document.getElementById('file-input').click(); }
 
 function loadWorldData(data) {
   worldMaps = (data.maps || []).map(m => ({
-    exits: [], npcs: [], triggers: [], ...m,  // ensure arrays exist on legacy maps
+    exits: [], npcs: [], triggers: [], items: [], ...m,  // ensure arrays exist on legacy maps
   }));
   if (data.tintTable)    tintTable        = [...data.tintTable];
   if (data.typeTable)    typeTable        = [...data.typeTable];
@@ -2974,6 +3204,8 @@ mapCanvas.addEventListener('mousedown', e => {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openExitModal(r,c);
     } else if(tool==='npc') {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openNpcModal(r,c);
+    } else if(tool==='item') {
+      if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openItemModal(r,c);
     } else if(tool==='trigger') {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) openTriggerModal(r,c);
     } else if(tool==='spawn') {
@@ -2990,6 +3222,8 @@ mapCanvas.addEventListener('mousedown', e => {
         if(npc)  { openNpcModal(r,c); return; }
         const trig = cur.triggers?.find(t=>+t.row===r&&+t.col===c);
         if(trig) { openTriggerModal(r,c); return; }
+        const item = cur.items?.find(it=>+it.row===r&&+it.col===c);
+        if(item) { openItemModal(r,c); return; }
         const exit = cur.exits?.find(x=>+x.fromRow===r&&+x.fromCol===c);
         if(exit) { openExitModal(r,c); return; }
         const sp = cur.spawn;
@@ -3074,7 +3308,8 @@ document.getElementById('btn-fill' ).onclick=()=>setTool('fill');
 document.getElementById('btn-pick' ).onclick=()=>setTool('pick');
 document.getElementById('btn-exit'  ).onclick=()=>setTool('exit');
 document.getElementById('btn-spawn' ).onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
-document.getElementById('btn-npc'   ).onclick=()=>{ setTool('npc'); toast('Click any cell to place / edit an NPC'); };
+document.getElementById('btn-npc'   ).onclick=()=>{ setTool('npc');  toast('Click any cell to place / edit an NPC'); };
+document.getElementById('btn-item'  ).onclick=()=>{ setTool('item'); toast('Click any cell to place / edit an Item'); };
 
 document.getElementById('btn-select').onclick = () => setTool('select');
 
@@ -3083,6 +3318,7 @@ function handleInsertSelect(val) {
   if (val === 'exit')  { setTool('exit');  toast('Click any cell to place / edit a Waypoint'); }
   if (val === 'spawn') { setTool('spawn'); toast('Click any cell to set the player spawn point'); }
   if (val === 'npc')   { setTool('npc');   toast('Click any cell to place / edit an NPC'); }
+  if (val === 'item')  { setTool('item');  toast('Click any cell to place / edit an Item'); }
 }
 document.getElementById('btn-maps'  ).onclick=()=>openMapsPopup();
 document.getElementById('btn-trigger').onclick=()=>{ setTool('trigger'); toast('Click any cell to place / edit a trigger'); };
@@ -3176,6 +3412,7 @@ document.addEventListener('keydown', e => {
     case 'p': setTool('pick');  break;
     case 'x': setTool('exit');  break;
     case 'n': setTool('npc');     break;
+    case 'm': setTool('item');    break;
     case 't': setTool('trigger'); break;
     case 's': setTool('spawn'); break;
     case 'g':
