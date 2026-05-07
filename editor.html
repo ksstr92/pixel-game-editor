@@ -374,7 +374,8 @@ select.type-sel {
   <button class="tbtn active" id="btn-paint" title="Brush [B]">🖌 Brush</button>
   <button class="tbtn" id="btn-erase" title="Eraser [E]">🧹 Eraser</button>
   <button class="tbtn" id="btn-fill"  title="Bucket fill [F]">🪣 Bucket</button>
-  <button class="tbtn" id="btn-pick"  title="Eyedropper [P]">🔍 Eyedropper</button>
+  <button class="tbtn" id="btn-pick"   title="Eyedropper [P]">🔍 Eyedropper</button>
+  <button class="tbtn" id="btn-select" title="Select — click waypoints, NPCs, triggers to edit">↖ Select</button>
   <div class="sep"></div>
   <select id="insert-select" class="type-sel" title="Insert object" onchange="handleInsertSelect(this.value);this.value=''">
     <option value="">＋ Insert</option>
@@ -418,12 +419,6 @@ select.type-sel {
 
     <div id="palette-scroll">
       <canvas id="palette-canvas"></canvas>
-      <!-- Placement tools shown inside the Tiles tab -->
-      <div id="placement-tools" style="display:flex;gap:4px;flex-wrap:wrap;padding:6px 6px 2px;">
-        <button class="tbtn" id="tab-btn-exit"  title="Place/remove waypoint [X]" onclick="setTool('exit')">🚪 Waypoint</button>
-        <button class="tbtn" id="tab-btn-spawn" title="Set player spawn [S]"       onclick="setTool('spawn')">⚑ Spawn</button>
-        <button class="tbtn" id="tab-btn-npc"   title="Place NPC [N]"              onclick="setTool('npc')">👤 NPC</button>
-      </div>
       <div id="maps-panel">
         <div class="maps-hdr">
           <span>World Maps</span>
@@ -2135,15 +2130,13 @@ function initMap(fill = -1) {
 // ── Tool / zoom ────────────────────────────────────────────
 function setTool(t) {
   tool = t;
-  ['paint','erase','fill','pick','exit','spawn','npc','trigger'].forEach(n =>
-    document.getElementById('btn-'+n).classList.toggle('active', n === t)
+  ['paint','erase','fill','pick','select','exit','spawn','npc','trigger'].forEach(n =>
+    document.getElementById('btn-'+n)?.classList.toggle('active', n === t)
   );
-  // Mirror active state on in-tab placement buttons
-  ['exit','spawn','npc'].forEach(n => {
-    const el = document.getElementById('tab-btn-'+n);
-    if (el) el.classList.toggle('active', n === t);
-  });
-  mapCanvas.style.cursor = t === 'fill' ? 'cell' : t === 'pick' ? 'zoom-in' : 'crosshair';
+  mapCanvas.style.cursor = t === 'fill'   ? 'cell'
+                         : t === 'pick'   ? 'zoom-in'
+                         : t === 'select' ? 'default'
+                         : 'crosshair';
 }
 
 function setZoom(z, pivotX, pivotY) {
@@ -2368,9 +2361,8 @@ function switchTab(tab) {
   if (tab === 'editor') { openTileEditorPopup(); return; }
   if (tab === 'maps')   { openMapsPopup(); return; }
   const showPalette = tab === 'palette';
-  document.getElementById('palette-canvas'  ).style.display = showPalette ? 'block' : 'none';
-  document.getElementById('placement-tools' ).style.display = showPalette ? 'flex'  : 'none';
-  document.getElementById('maps-panel'      ).style.display = 'none';
+  document.getElementById('palette-canvas').style.display = showPalette ? 'block' : 'none';
+  document.getElementById('maps-panel'    ).style.display = 'none';
   document.getElementById('assets-panel'    ).style.display = tab === 'assets' ? 'block' : 'none';
   ['palette','assets'].forEach(t =>
     document.getElementById('tab-' + t).classList.toggle('active', t === tab)
@@ -2676,6 +2668,20 @@ mapCanvas.addEventListener('mousedown', e => {
         const cur = worldMaps.find(m=>m.id===currentMapId);
         if(cur) { cur.spawn={row:r,col:c}; renderMap(); renderMapsList(); toast(`Spawn set → row ${r}, col ${c}`); }
       }
+    } else if(tool==='select') {
+      if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
+        const cur = worldMaps.find(m=>m.id===currentMapId);
+        if(!cur) return;
+        // Priority: NPC → trigger → waypoint (exit) → spawn
+        const npc  = cur.npcs?.find(n=>+n.row===r&&+n.col===c);
+        if(npc)  { openNpcModal(r,c); return; }
+        const trig = cur.triggers?.find(t=>+t.row===r&&+t.col===c);
+        if(trig) { openTriggerModal(r,c); return; }
+        const exit = cur.exits?.find(x=>+x.fromRow===r&&+x.fromCol===c);
+        if(exit) { openExitModal(r,c); return; }
+        const sp = cur.spawn;
+        if(sp&&+sp.row===r&&+sp.col===c) { toast('Click a new cell to move the spawn point'); setTool('spawn'); return; }
+      }
     } else { isPainting=true; lastCell={r:-1,c:-1}; paint(r,c); }
   }
 });
@@ -2756,6 +2762,8 @@ document.getElementById('btn-pick' ).onclick=()=>setTool('pick');
 document.getElementById('btn-exit'  ).onclick=()=>setTool('exit');
 document.getElementById('btn-spawn' ).onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
 document.getElementById('btn-npc'   ).onclick=()=>{ setTool('npc'); toast('Click any cell to place / edit an NPC'); };
+
+document.getElementById('btn-select').onclick = () => setTool('select');
 
 function handleInsertSelect(val) {
   if (!val) return;
