@@ -686,39 +686,44 @@ function drawNPC(x,y,npc) {
   const near = dist(player.x,player.y,x,y) < 44 * TILE_SCALE;
 
   // ── Monochrome tileId path (world-map NPCs) ────────────
-  if (npc.tileId >= 0 && monoReady) {
+  if (npc.tileId >= 0) {
     // Subtle vertical bob while walking
     const bob = npc.moving ? Math.round(Math.sin(Date.now() * 0.01) * 1.5) : 0;
     const dx  = Math.round(x - cam.x - TS / 2);
     const dy  = Math.round(y - cam.y - TS / 2) + bob;
-    // Background-sample composite (same as drawKnight — no colored rect)
-    _sprCtx.clearRect(0, 0, TS, TS);
-    _sprCtx.drawImage(ctx.canvas, dx, dy, TS, TS, 0, 0, TS, TS);
-    _sprCtx.globalCompositeOperation = 'multiply';
-    _sprCtx.imageSmoothingEnabled = false;
+
+    // Draw like a map tile: fill solid tint background, then multiply the sprite.
+    // This keeps the NPC opaque (no see-through), matching how drawMonoTile works.
+    const tint = worldData?.tintTable?.[npc.tileId] || '#ffffff';
+    ctx.fillStyle = tint;
+    ctx.fillRect(dx, dy, TS, TS);
+
     const baseId = worldData?.customTiles?.[npc.tileId]
       ? (worldData.customTiles[npc.tileId].base >= 0 ? worldData.customTiles[npc.tileId].base : -1)
       : npc.tileId;
     if (baseId >= 0) {
       const si = getTileSheet(baseId);
       if (si) {
-        // Flip the sprite horizontally when facing left
-        if (!npc.facingRight) { _sprCtx.save(); _sprCtx.translate(TS, 0); _sprCtx.scale(-1, 1); }
-        _sprCtx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, 0, 0, TS, TS);
-        if (!npc.facingRight) _sprCtx.restore();
+        ctx.save();
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.imageSmoothingEnabled = false;
+        if (!npc.facingRight) {
+          // Flip horizontally in-place around the tile centre
+          ctx.translate(dx + TS, dy);
+          ctx.scale(-1, 1);
+          ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, 0, 0, TS, TS);
+        } else {
+          ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, dx, dy, TS, TS);
+        }
+        ctx.restore();
       }
     }
-    // Draw custom pixel edits on top
+    // Draw custom pixel edits on top (source-over, fully opaque)
     const ct = worldData?.customTiles?.[npc.tileId];
     if (ct?.pixels) {
-      _sprCtx.globalCompositeOperation = 'source-over';
       const cv = getWorldTileCanvas(npc.tileId);
-      if (cv) _sprCtx.drawImage(cv, 0, 0, TS, TS);
+      if (cv) { ctx.save(); ctx.imageSmoothingEnabled = false; ctx.drawImage(cv, dx, dy, TS, TS); ctx.restore(); }
     }
-    _sprCtx.globalCompositeOperation = 'source-over';
-    ctx.save(); ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(_sprBuf, dx, dy);
-    ctx.restore();
   }
 
   // [E] Talk prompt (no name label)
