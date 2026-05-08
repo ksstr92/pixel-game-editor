@@ -170,10 +170,40 @@ const TORCHES = [];
 // ── Tilesets — loaded from world.json assets (up to 2 sheets) ────────────────
 const monoSheet  = new Image();  let monoReady  = false;
 const monoSheet2 = new Image();  let monoReady2 = false;
-monoSheet.onload   = () => { monoReady  = true; };
-monoSheet2.onload  = () => { monoReady2 = true; };
+
+// Processed (transparent-background) versions used for entity/NPC drawing.
+// White and near-white pixels are made alpha=0 so entities composite cleanly
+// on top of whatever map tile is beneath them, with no white box visible.
+let procSheet  = null;
+let procSheet2 = null;
+
+function buildProcessedSheet(srcImg) {
+  const w = srcImg.naturalWidth, h = srcImg.naturalHeight;
+  if (!w || !h) return null;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const tc = c.getContext('2d');
+  tc.drawImage(srcImg, 0, 0);
+  const imgData = tc.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    // Treat near-white as background → transparent
+    if (d[i] > 200 && d[i+1] > 200 && d[i+2] > 200) d[i+3] = 0;
+  }
+  tc.putImageData(imgData, 0, 0);
+  return c;
+}
+
+monoSheet.onload   = () => { monoReady  = true; procSheet  = buildProcessedSheet(monoSheet); };
+monoSheet2.onload  = () => { monoReady2 = true; procSheet2 = buildProcessedSheet(monoSheet2); };
 monoSheet.onerror  = () => console.warn('Tileset 1 not found.');
 monoSheet2.onerror = () => console.warn('Tileset 2 not found.');
+
+// Returns the processed (transparent-bg) canvas for a given tile id.
+function getProcSheet(id) {
+  if (id < sheet1TileCount) return procSheet  ? { sh: procSheet,  mc: monoCol(),  localId: id } : null;
+  return procSheet2 ? { sh: procSheet2, mc: monoCol2(), localId: id - sheet1TileCount } : null;
+}
 
 function monoCol()  { return Math.max(1, Math.floor((monoSheet.naturalWidth  || 272) / 16)); }
 function monoCol2() { return Math.max(1, Math.floor((monoSheet2.naturalWidth || 272) / 16)); }
@@ -551,42 +581,22 @@ function drawShadow(x,y,r) {
 }
 
 // ── Player character — Monochrome tile 119 (HELMET) ──────────────────────────
-// Off-screen buffer used to composite the sprite over the already-drawn map.
-// Multiply-blending against the sampled background means white sprite pixels
-// become transparent (map shows through) and dark pixels darken the tile below —
-// no coloured rectangle is ever visible behind the player.
-const _sprBuf = document.createElement('canvas');
-_sprBuf.width = _sprBuf.height = TS;
-const _sprCtx = _sprBuf.getContext('2d');
-
 function drawKnight(x,y,facingRight,animState='idle') {
-  const dx  = Math.round(x - cam.x - TS/2);
-  const dy  = Math.round(y - cam.y - TS/2);
+  const dx = Math.round(x - cam.x - TS/2);
+  const dy = Math.round(y - cam.y - TS/2);
 
-  if (!monoReady) {
-    // Fallback before sheet loads
+  if (!procSheet) {
     ctx.fillStyle = '#667788';
     ctx.fillRect(dx, dy, TS, TS);
     return;
   }
 
-  // 1. Sample whatever map tiles are already drawn beneath the sprite
-  _sprCtx.clearRect(0, 0, TS, TS);
-  _sprCtx.drawImage(ctx.canvas, dx, dy, TS, TS, 0, 0, TS, TS);
-
-  // 2. Multiply the tile onto the sampled background:
-  //    - white pixels (sprite bg) × map colour = map colour  → invisible bg
-  //    - dark pixels (sprite art) × map colour ≈ black       → visible sprite
-  _sprCtx.globalCompositeOperation = 'multiply';
-  _sprCtx.imageSmoothingEnabled = false;
-  _sprCtx.drawImage(monoSheet,
-    (119 % 17) * 16, Math.floor(119 / 17) * 16, 16, 16,
-    0, 0, TS, TS);
-
-  // 3. Blit the composited result back to the main canvas
+  // Draw from the pre-processed sheet (white → transparent) directly.
+  const sx = (119 % 17) * 16, sy = Math.floor(119 / 17) * 16;
   ctx.save();
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(_sprBuf, dx, dy);
+  if (!facingRight) { ctx.translate(dx + TS, dy); ctx.scale(-1, 1); }
+  ctx.drawImage(procSheet, sx, sy, 16, 16, facingRight ? dx : 0, facingRight ? dy : 0, TS, TS);
   ctx.restore();
 }
 
@@ -692,23 +702,18 @@ function drawNPC(x,y,npc) {
     const dx  = Math.round(x - cam.x - TS / 2);
     const dy  = Math.round(y - cam.y - TS / 2) + bob;
 
-    // Draw like a map tile: fill solid tint background, then multiply the sprite.
-    // This keeps the NPC opaque (no see-through), matching how drawMonoTile works.
-    const tint = worldData?.tintTable?.[npc.tileId] || '#ffffff';
-    ctx.fillStyle = tint;
-    ctx.fillRect(dx, dy, TS, TS);
-
     const baseId = worldData?.customTiles?.[npc.tileId]
       ? (worldData.customTiles[npc.tileId].base >= 0 ? worldData.customTiles[npc.tileId].base : -1)
       : npc.tileId;
+
     if (baseId >= 0) {
-      const si = getTileSheet(baseId);
+      // Use the pre-processed sheet (white pixels → alpha 0) so the NPC
+      // composites cleanly on the map with no white box visible.
+      const si = getProcSheet(baseId);
       if (si) {
         ctx.save();
-        ctx.globalCompositeOperation = 'multiply';
         ctx.imageSmoothingEnabled = false;
         if (!npc.facingRight) {
-          // Flip horizontally in-place around the tile centre
           ctx.translate(dx + TS, dy);
           ctx.scale(-1, 1);
           ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, 0, 0, TS, TS);
@@ -718,7 +723,7 @@ function drawNPC(x,y,npc) {
         ctx.restore();
       }
     }
-    // Draw custom pixel edits on top (source-over, fully opaque)
+    // Draw custom pixel edits on top
     const ct = worldData?.customTiles?.[npc.tileId];
     if (ct?.pixels) {
       const cv = getWorldTileCanvas(npc.tileId);
@@ -848,23 +853,19 @@ function drawMapItems() {
     ctx.fillStyle = grad;
     ctx.fillRect(sx - glowR, sy - glowR, glowR * 2, glowR * 2);
 
-    // Tile sprite (same composite as NPCs)
+    // Tile sprite — use pre-processed (transparent-bg) sheet so no white box
     const tid = item.tileId ?? -1;
     if (tid >= 0) {
       const ct     = worldData?.customTiles?.[tid];
       const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : tid;
       if (baseId >= 0) {
         const dx = Math.round(sx - TS / 2), dy = Math.round(sy - TS / 2);
-        _sprCtx.clearRect(0, 0, TS, TS);
-        _sprCtx.drawImage(ctx.canvas, dx, dy, TS, TS, 0, 0, TS, TS);
-        _sprCtx.globalCompositeOperation = 'multiply';
-        _sprCtx.imageSmoothingEnabled = false;
-        const si = getTileSheet(baseId);
-        if (si) _sprCtx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, 0, 0, TS, TS);
-        _sprCtx.globalCompositeOperation = 'source-over';
-        ctx.save(); ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(_sprBuf, dx, dy);
-        ctx.restore();
+        const si = getProcSheet(baseId);
+        if (si) {
+          ctx.save(); ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, dx, dy, TS, TS);
+          ctx.restore();
+        }
       }
     }
 
