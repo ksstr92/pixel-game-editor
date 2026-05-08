@@ -1381,11 +1381,25 @@ function openNpcModal(row, col) {
         patrol = { type: 'none' };
       }
 
+      // Build schedule data from the dynamic entry list
+      const schedule = schedEntries
+        .filter(s => s.mapId)
+        .map(s => ({
+          startMin: s.startMin ?? 0,
+          endMin:   s.endMin   ?? 480,
+          mapId:    s.mapId,
+          row:      s.row      ?? 0,
+          col:      s.col      ?? 0,
+          behavior: s.behavior ?? 'idle',
+          radius:   s.radius   ?? 3,
+        }));
+
       const npcData = {
         name, tileId, dialog,
         portrait:    portraitData ?? null,
         templateId:  selectedTmpl?.id ?? null,
         patrol,
+        schedule,
       };
 
       if (existing) {
@@ -1457,7 +1471,121 @@ function openNpcModal(row, col) {
   const patrolWrap = document.createElement('div');
   patrolWrap.append(patrolSep, patrolLbl, patrolTypeRow, wanderWrap, wpWrap);
 
-  box.append(h3, tmplWrap, nameRow, tileRow, dialogLbl, dialogTA, patrolWrap, btns);
+  // ── Schedule ─────────────────────────────────────────────
+  function minsToTime(m) {
+    return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  }
+  function timeToMins(s) {
+    const [h, mi] = (s || '00:00').split(':').map(Number);
+    return (h || 0) * 60 + (mi || 0);
+  }
+
+  let schedEntries = (existing?.schedule ?? []).map(s => ({ ...s }));
+
+  const schedSep = document.createElement('div');
+  schedSep.style.cssText = 'border-top:1px solid #2a2a2a;margin:8px 0 4px;';
+
+  const schedHeader = document.createElement('div');
+  schedHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;';
+  const schedLbl = document.createElement('span');
+  schedLbl.style.cssText = 'color:#888;font-size:10px;';
+  schedLbl.textContent = 'Daily Schedule (cross-map time-based movement):';
+  const addSchedBtn = document.createElement('button');
+  addSchedBtn.className = 'tbtn';
+  addSchedBtn.style.cssText = 'font-size:10px;padding:2px 8px;';
+  addSchedBtn.textContent = '+ Entry';
+  schedHeader.append(schedLbl, addSchedBtn);
+
+  const schedList = document.createElement('div');
+  schedList.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
+
+  function renderSchedList() {
+    schedList.innerHTML = '';
+    if (!schedEntries.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:#555;font-size:10px;padding:3px 0;';
+      empty.textContent = 'No schedule — NPC stays on their home map.';
+      schedList.appendChild(empty);
+      return;
+    }
+    schedEntries.forEach((entry, idx) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px;background:#0a0a0a;padding:4px 6px;border:1px solid #222;border-radius:2px;';
+
+      const mk = (tag, css, attrs = {}) => {
+        const el = document.createElement(tag);
+        el.style.cssText = css;
+        Object.assign(el, attrs);
+        return el;
+      };
+
+      // Time range
+      const tBase = 'background:#111;color:#ccc;border:1px solid #2a2a2a;padding:2px 4px;font-size:10px;font-family:monospace;';
+      const startInp = mk('input', tBase + 'width:60px;', { type: 'time', value: minsToTime(entry.startMin ?? 0) });
+      startInp.onchange = () => { schedEntries[idx].startMin = timeToMins(startInp.value); };
+      const arrow = mk('span', 'color:#555;font-size:10px;', {}); arrow.textContent = '→';
+      const endInp = mk('input', tBase + 'width:60px;', { type: 'time', value: minsToTime(entry.endMin ?? 480) });
+      endInp.onchange = () => { schedEntries[idx].endMin = timeToMins(endInp.value); };
+
+      // Map dropdown
+      const mapSel = mk('select', 'background:#111;color:#ccc;border:1px solid #2a2a2a;font-size:10px;padding:2px;flex:1;min-width:80px;', {});
+      worldMaps.forEach(wm => {
+        const o = document.createElement('option');
+        o.value = wm.id; o.textContent = wm.name;
+        if (wm.id === (entry.mapId ?? currentMapId)) o.selected = true;
+        mapSel.appendChild(o);
+      });
+      if (!entry.mapId) schedEntries[idx].mapId = mapSel.value;
+      mapSel.onchange = () => { schedEntries[idx].mapId = mapSel.value; };
+
+      // Row / Col
+      const nBase = 'background:#111;color:#ccc;border:1px solid #2a2a2a;padding:2px 4px;font-size:10px;width:40px;';
+      const rowInp = mk('input', nBase, { type: 'number', min: 0, max: MAP_ROWS - 1, value: entry.row ?? 0, title: 'Row' });
+      rowInp.onchange = () => { schedEntries[idx].row = parseInt(rowInp.value, 10) || 0; };
+      const colInp = mk('input', nBase, { type: 'number', min: 0, max: MAP_COLS - 1, value: entry.col ?? 0, title: 'Col' });
+      colInp.onchange = () => { schedEntries[idx].col = parseInt(colInp.value, 10) || 0; };
+
+      // Behavior
+      const behSel = mk('select', 'background:#111;color:#ccc;border:1px solid #2a2a2a;font-size:10px;padding:2px;', {});
+      [['idle', 'Idle'], ['wander', 'Wander'], ['waypoint', 'Waypoint']].forEach(([v, l]) => {
+        const o = document.createElement('option'); o.value = v; o.textContent = l;
+        if (v === (entry.behavior ?? 'idle')) o.selected = true;
+        behSel.appendChild(o);
+      });
+
+      // Wander radius (visible only when behavior=wander)
+      const radInp = mk('input', nBase + 'width:32px;', { type: 'number', min: 1, max: 30, value: entry.radius ?? 3, title: 'Wander radius (tiles)' });
+      radInp.onchange = () => { schedEntries[idx].radius = parseInt(radInp.value, 10) || 3; };
+      const updateRadVis = () => { radInp.style.display = behSel.value === 'wander' ? '' : 'none'; };
+      behSel.onchange = () => { schedEntries[idx].behavior = behSel.value; updateRadVis(); };
+      updateRadVis();
+
+      // Delete
+      const delBtn = mk('button', 'font-size:11px;padding:1px 6px;background:#3a1515;color:#f88;border:none;cursor:pointer;', {});
+      delBtn.textContent = '×';
+      delBtn.onclick = () => { schedEntries.splice(idx, 1); renderSchedList(); };
+
+      row.append(startInp, arrow, endInp, mapSel, rowInp, colInp, behSel, radInp, delBtn);
+      schedList.appendChild(row);
+    });
+  }
+
+  addSchedBtn.onclick = () => {
+    schedEntries.push({
+      startMin: 480, endMin: 1080,
+      mapId:    currentMapId,
+      row:      Math.floor(MAP_ROWS / 2),
+      col:      Math.floor(MAP_COLS / 2),
+      behavior: 'idle', radius: 3,
+    });
+    renderSchedList();
+  };
+  renderSchedList();
+
+  const schedWrap = document.createElement('div');
+  schedWrap.append(schedSep, schedHeader, schedList);
+
+  box.append(h3, tmplWrap, nameRow, tileRow, dialogLbl, dialogTA, patrolWrap, schedWrap, btns);
   ov.appendChild(box); document.body.appendChild(ov);
   ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
   nameInp.focus(); nameInp.select();

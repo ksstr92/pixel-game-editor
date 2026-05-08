@@ -1290,6 +1290,49 @@ function updateNPC(npc, dt) {
   }
 }
 
+// ── NPC Schedule tick ────────────────────────────────────────────────────────
+// Called every frame. Despawns NPCs whose slot moved them to another map,
+// retargets NPCs whose slot changed within the same map, and spawns NPCs
+// arriving from other maps.
+function updateSchedules() {
+  if (!worldData || !currentWorldMapId) return;
+
+  // 1. Despawn or retarget existing NPCs when their slot changes
+  npcs = npcs.filter(npc => {
+    if (!npc.schedule?.length) return true;
+    const slot    = getScheduleSlot(npc, gameTime);
+    const slotKey = slot?.startMin ?? -1;
+    const prevKey = npc.scheduleSlot?.startMin ?? -1;
+    if (slotKey === prevKey) return true; // no change
+
+    const targetMap = slot ? slot.mapId : npc.homeMapId;
+    if (targetMap !== currentWorldMapId) return false; // despawn — they left
+
+    // Same map, new slot — update home position and patrol
+    npc.scheduleSlot = slot;
+    const tx = (slot.col + 0.5) * TS;
+    const ty = (slot.row + 0.5) * TS;
+    npc.patrolTarget = { x: tx, y: ty };
+    npc.homeX        = tx;
+    npc.homeY        = ty;
+    npc.patrol       = buildPatrolFromSlot(slot);
+    npc.patrolWait   = 0;
+    return true;
+  });
+
+  // 2. Spawn NPCs arriving on this map from any other map
+  for (const wm of worldData.maps) {
+    for (const n of (wm.npcs ?? [])) {
+      if (!n.schedule?.length) continue;
+      const slot = getScheduleSlot(n, gameTime);
+      if (!slot || slot.mapId !== currentWorldMapId) continue;
+      const id = n.id ?? (n.name + '@' + wm.id);
+      if (npcs.some(a => a._npcId === id)) continue; // already here
+      npcs.push(buildNpcInstance(n, wm.id, slot));
+    }
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // PLAYER
 // ════════════════════════════════════════════════════════════════════════════
@@ -1443,6 +1486,53 @@ let inventory     = [];   // [{ name, tileId, description, count }]
 let mapItems      = [];   // items placed on the current map
 let showInventory = false;
 let hudMouseX = 0, hudMouseY = 0; // mouse position in hud canvas pixels
+
+// ── NPC Schedule helpers ─────────────────────────────────────────────────────
+// Returns the schedule entry active at `mins` (0–1439), or null.
+function getScheduleSlot(npc, mins) {
+  if (!npc.schedule?.length) return null;
+  return npc.schedule.find(s => mins >= s.startMin && mins < s.endMin) ?? null;
+}
+
+// Convert a schedule slot's behavior string into a patrol object.
+function buildPatrolFromSlot(slot) {
+  const type = slot?.behavior ?? 'none';
+  if (!type || type === 'idle') return { type: 'none' };
+  return { type, radius: slot.radius ?? 3, points: slot.points ?? [] };
+}
+
+// Build a runtime NPC object from raw data + the currently-active schedule slot.
+// `homeMapId` = the map the NPC is defined on in the editor.
+function buildNpcInstance(n, homeMapId, slot) {
+  const row = slot?.row ?? n.row;
+  const col = slot?.col ?? n.col;
+  const npc = {
+    _npcId:       n.id ?? (n.name + '@' + homeMapId),
+    homeMapId,
+    x:            (col + 0.5) * TS,
+    y:            (row + 0.5) * TS,
+    name:         n.name   ?? 'Villager',
+    tileId:       n.tileId ?? -1,
+    dialog:       n.dialog ?? ['...'],
+    portraitImg:  null,
+    isElder:      false,
+    radius:       Math.round(TS * 0.35),
+    schedule:     n.schedule ?? [],
+    patrol:       slot ? buildPatrolFromSlot(slot) : (n.patrol ?? { type: 'none' }),
+    homeX:        (col + 0.5) * TS,
+    homeY:        (row + 0.5) * TS,
+    patrolTarget: null,
+    patrolWait:   Math.random() * 2.5,
+    patrolIdx:    0,
+    moving:       false,
+    facingRight:  true,
+    scheduleSlot: slot ?? null, // track active slot for change detection
+  };
+  if (n.portrait?.dataUrl) {
+    const img = new Image(); img.src = n.portrait.dataUrl; npc.portraitImg = img;
+  }
+  return npc;
+}
 
 // ── Day/Night Cycle ──────────────────────────────────────────────────────────
 let gameTime = 360;               // game-minutes since midnight; 360 = 6:00 AM
@@ -1621,34 +1711,22 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
 
   // Clear entities; load NPCs and triggers from world map data
   enemies = [];
-  npcs = (m.npcs || []).map(n => {
-    const npc = {
-      x: (n.col + 0.5) * TS,
-      y: (n.row + 0.5) * TS,
-      name:        n.name   ?? 'Villager',
-      tileId:      n.tileId ?? -1,
-      dialog:      n.dialog ?? ['...'],
-      portraitImg: null,
-      isElder:     false,
-      // Patrol
-      patrol:       n.patrol ?? { type: 'none' },
-      homeX:        (n.col + 0.5) * TS,
-      homeY:        (n.row + 0.5) * TS,
-      patrolTarget: null,
-      patrolWait:   Math.random() * 2.5, // stagger so NPCs don't all start simultaneously
-      patrolIdx:    0,
-      moving:       false,
-      facingRight:  true,
-      radius:       Math.round(TS * 0.35),  // needed by resolveCollision during patrol
-    };
-    // Pre-load portrait image so it's ready when dialog opens
-    if (n.portrait?.dataUrl) {
-      const img = new Image();
-      img.src = n.portrait.dataUrl;
-      npc.portraitImg = img;
+  // Scan every map for NPCs that belong on this map right now (schedule-aware).
+  // An NPC with no schedule always appears on its home map.
+  // An NPC with a schedule appears wherever its current slot points.
+  npcs = [];
+  for (const wm of (worldData?.maps ?? [])) {
+    for (const n of (wm.npcs ?? [])) {
+      const slot       = n.schedule?.length ? getScheduleSlot(n, gameTime) : null;
+      const targetMap  = slot ? slot.mapId : wm.id;
+      if (targetMap !== mapId) continue;
+      npcs.push(buildNpcInstance(n, wm.id, slot));
     }
-    return npc;
-  });
+  }
+  // Fallback: if no world data (demo mode), use home-map NPCs directly
+  if (!worldData && m.npcs?.length) {
+    npcs = m.npcs.map(n => buildNpcInstance(n, mapId, null));
+  }
   triggers = (m.triggers || []).map(t => ({ ...t }));
   firedTriggers = new Set(); // reset one-shot tracking on every map load
   victoryDone = true; // no victory condition without enemies
@@ -1754,6 +1832,7 @@ function gameLoop(ts) {
   lastTime=ts;
 
   gameTime = (gameTime + MINS_PER_REAL_SEC * dt) % 1440;
+  updateSchedules();
   updatePlayer(dt);
   npcs.forEach(n => updateNPC(n, dt));
   checkMapExits();
