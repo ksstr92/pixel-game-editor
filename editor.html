@@ -2422,16 +2422,20 @@ function paint(r, c) {
   if (r < 0 || r >= MAP_ROWS || c < 0 || c >= MAP_COLS) return;
   if (lastCell.r === r && lastCell.c === c) return;
   lastCell = { r, c };
-  const onOverlay = isOverlayTile();
-  const map = onOverlay ? overlayMap : tileMap;
-  const nw  = tool === 'erase' ? -1 : selTile;
-  const old = map[r][c];
-  if (old === nw) return;
-  pushUndo([{ r, c, old, nw, layer: onOverlay ? 'overlay' : 'base' }]);
-  map[r][c] = nw;
 
-  // Erase also removes any entities placed on this cell
   if (tool === 'erase') {
+    // Erase clears BOTH base and overlay layers at this cell
+    const ops = [];
+    const baseOld = tileMap[r][c];
+    const ovOld   = overlayMap[r]?.[c] ?? -1;
+    if (baseOld !== -1) ops.push({ r, c, old: baseOld, nw: -1, layer: 'base' });
+    if (ovOld   !== -1) ops.push({ r, c, old: ovOld,   nw: -1, layer: 'overlay' });
+    if (ops.length) {
+      pushUndo(ops);
+      tileMap[r][c] = -1;
+      if (overlayMap[r]) overlayMap[r][c] = -1;
+    }
+    // Also remove any entities on this cell
     const cur = worldMaps.find(m => m.id === currentMapId);
     if (cur) {
       const prevN = cur.npcs?.length ?? 0;
@@ -2445,6 +2449,14 @@ function paint(r, c) {
       if (prevN !== cur.npcs.length || prevE !== cur.exits.length || prevT !== cur.triggers.length || prevI !== (cur.items?.length ?? 0))
         renderMapsList();
     }
+  } else {
+    // Paint: target overlay or base depending on the selected tile type
+    const onOverlay = isOverlayTile();
+    const map = onOverlay ? overlayMap : tileMap;
+    const old = map[r][c];
+    if (old === selTile) return;
+    pushUndo([{ r, c, old, nw: selTile, layer: onOverlay ? 'overlay' : 'base' }]);
+    map[r][c] = selTile;
   }
 
   markMinimapDirty();
