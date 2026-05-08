@@ -496,7 +496,7 @@ function drawTile(r,c) {
   }
   if (worldData) {
     // Use world tintTable; support custom pixel tiles
-    const tint = worldData.tintTable?.[mt] || '#4b6271';
+    const tint = worldData.tintTable?.[mt] || '#ffffff';
     ctx.fillStyle = tint;
     ctx.fillRect(dx, dy, TS, TS);
     ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.imageSmoothingEnabled = false;
@@ -510,7 +510,7 @@ function drawTile(r,c) {
     }
     ctx.restore();
   } else {
-    drawMonoTile(mt, dx, dy, '#4b6271');
+    drawMonoTile(mt, dx, dy, '#ffffff');
   }
 }
 
