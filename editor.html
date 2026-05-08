@@ -290,6 +290,33 @@ select.type-sel {
 ::-webkit-scrollbar-track { background: #111; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #444; }
+
+/* ── PALETTE HOVER TOOLTIP ── */
+#pal-tooltip {
+  position: fixed;
+  display: none;
+  pointer-events: none;
+  z-index: 9999;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  padding: 5px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.7);
+}
+#pal-tooltip canvas {
+  display: block;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  border: 1px solid #2a2a2a;
+}
+#pal-tooltip-label {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #888;
+  text-align: center;
+  font-family: 'Consolas', 'Courier New', monospace;
+  white-space: nowrap;
+}
 </style>
 </head>
 <body>
@@ -3463,6 +3490,41 @@ palCanvas.addEventListener('click', e => {
     }
   }
 });
+// ── Palette hover tooltip ─────────────────────────────────
+const _palTip      = document.getElementById('pal-tooltip');
+const _palTipCv    = document.getElementById('pal-tooltip-canvas');
+const _palTipCtx   = _palTipCv.getContext('2d');
+const _palTipLabel = document.getElementById('pal-tooltip-label');
+const PAL_TIP_SIZE = 80; // px — 4× the 20px palette tile
+
+function showPalTooltip(id, clientX, clientY) {
+  // Draw the tile at 4× into the tooltip canvas
+  _palTipCv.width = _palTipCv.height = PAL_TIP_SIZE;
+  _palTipCtx.imageSmoothingEnabled = false;
+  drawTile(_palTipCtx, id, 0, 0, PAL_TIP_SIZE);
+
+  const name = customNames[id] || ('TILE_' + id);
+  const tag  = id >= SHEET1_TILE_COUNT ? ' [T2]' : '';
+  _palTipLabel.textContent = `#${id}${tag}  ${name}`;
+
+  // Position: right of the cursor, flip to left if near right edge
+  const TIP_W = PAL_TIP_SIZE + 12;
+  const TIP_H = PAL_TIP_SIZE + 30;
+  let tx = clientX + 14;
+  let ty = clientY - TIP_H / 2;
+  if (tx + TIP_W > window.innerWidth)  tx = clientX - TIP_W - 4;
+  if (ty < 4)                          ty = 4;
+  if (ty + TIP_H > window.innerHeight) ty = window.innerHeight - TIP_H - 4;
+
+  _palTip.style.left    = tx + 'px';
+  _palTip.style.top     = ty + 'px';
+  _palTip.style.display = 'block';
+}
+
+function hidePalTooltip() { _palTip.style.display = 'none'; }
+
+palCanvas.addEventListener('mouseleave', hidePalTooltip);
+
 palCanvas.addEventListener('mousemove', e => {
   const rect = palCanvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
@@ -3474,7 +3536,7 @@ palCanvas.addEventListener('mousemove', e => {
   if (tc >= 0 && tc < SHEET_COLS && tr >= 0 && tr < SHEET_ROWS) {
     const id = tr * SHEET_COLS + tc;
     if (id < SHEET1_TILE_COUNT) {
-      palCanvas.title = `ID:${id}  ${customNames[id] || ''}`;
+      showPalTooltip(id, e.clientX, e.clientY);
       return;
     }
   }
@@ -3487,8 +3549,7 @@ palCanvas.addEventListener('mousemove', e => {
     if (cr2 >= 0 && cc2 >= 0 && cc2 < SHEET_COLS) {
       const idx = cr2 * SHEET_COLS + cc2;
       if (idx < SHEET2_TILE_COUNT) {
-        const id = SHEET1_TILE_COUNT + idx;
-        palCanvas.title = `ID:${id}  [Tileset 2]  ${customNames[id] || ''}`;
+        showPalTooltip(SHEET1_TILE_COUNT + idx, e.clientX, e.clientY);
         return;
       }
     }
@@ -3504,12 +3565,13 @@ palCanvas.addEventListener('mousemove', e => {
     if (cr >= 0 && cc >= 0 && cc < SHEET_COLS) {
       const idx = cr * SHEET_COLS + cc;
       if (idx < custom.length) {
-        const id = custom[idx];
-        const base = tileBaseMap.has(id) ? ` (copy of #${tileBaseMap.get(id)})` : '';
-        palCanvas.title = `ID:${id}  ${customNames[id] || ''}${base}`;
+        showPalTooltip(custom[idx], e.clientX, e.clientY);
+        return;
       }
     }
   }
+
+  hidePalTooltip();
 });
 
 // ── Tile info controls ─────────────────────────────────────
@@ -3857,5 +3919,11 @@ loadAllTiles(() => {
   if (restored) toast('World restored from browser storage');
 });
 </script>
+
+<!-- Palette hover tooltip -->
+<div id="pal-tooltip">
+  <canvas id="pal-tooltip-canvas" width="80" height="80"></canvas>
+  <div id="pal-tooltip-label"></div>
+</div>
 </body>
 </html>
