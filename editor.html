@@ -373,9 +373,9 @@ select.type-sel {
   <div class="sep"></div>
   <button class="tbtn active" id="btn-paint" title="Brush [B]">🖌 Brush</button>
   <button class="tbtn" id="btn-erase" title="Eraser [E]">🧹 Eraser</button>
-  <button class="tbtn" id="btn-fill"  title="Bucket fill [F]">🪣 Bucket</button>
-  <button class="tbtn" id="btn-pick"   title="Eyedropper [P]">🔍 Eyedropper</button>
-  <button class="tbtn" id="btn-select" title="Select — click waypoints, NPCs, triggers to edit">↖ Select</button>
+  <button class="tbtn" id="btn-fill"  title="Bucket fill [P]">🪣 Bucket</button>
+  <button class="tbtn" id="btn-pick"   title="Eyedropper [I]">🔍 Eyedropper</button>
+  <button class="tbtn" id="btn-select" title="Select [V] — click waypoints, NPCs, triggers to edit">↖ Select</button>
   <div class="sep"></div>
   <select id="insert-select" class="type-sel" title="Insert object" onchange="handleInsertSelect(this.value);this.value=''">
     <option value="">＋ Insert</option>
@@ -3493,10 +3493,12 @@ document.addEventListener('keydown', e => {
   const tag=document.activeElement?.tagName;
   if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
   switch(e.key.toLowerCase()) {
-    case 'b': setTool('paint'); break;
-    case 'e': setTool('erase'); break;
-    case 'f': setTool('fill');  break;
-    case 'p': setTool('pick');  break;
+    case 'b': setTool('paint');  break;
+    case 'e': setTool('erase');  break;
+    case 'f': setTool('fill');   break; // keep F as alias
+    case 'p': setTool('fill');   break; // bucket
+    case 'i': setTool('pick');   break; // eyedropper
+    case 'v': setTool('select'); break;
     case 'x': setTool('exit');  break;
     case 'n': setTool('npc');     break;
     case 'm': setTool('item');    break;
