@@ -495,6 +495,9 @@ const MAP_ROWS    = 64;
 let SHEET_COLS  = 17;
 let SHEET_ROWS  = 8;
 let TOTAL_TILES = 136;   // updated dynamically when a tileset is imported
+let SHEET1_TILE_COUNT = 136; // tiles from tileset 1 (updated when sheet 1 is loaded)
+let SHEET2_TILE_COUNT = 0;   // tiles from tileset 2 (updated when sheet 2 is loaded)
+let SHEET2_COLS = 17;        // column count of tileset 2 (updated when sheet 2 is loaded)
 
 // Logical T types (matching game.html)
 const T = { WALL:0, GRASS:1, WATER:2, SWALL:3, TREE:4, PATH:5, FLOOR:6, DWALL:7, OVERLAY_WALK:8, OVERLAY_BLOCK:9 };
@@ -648,15 +651,15 @@ let customNames = [...MT_NAMES];
 
 // ── Asset State ───────────────────────────────────────────
 // Each slot: { name: string, dataUrl: string } or null
-let assets = { tileset: null, charAtlas: null };
+let assets = { tileset: null, tileset2: null };
 
 // ── NPC Templates ─────────────────────────────────────────
 // Each: { id, displayName, tileId, portrait: {name, dataUrl}|null }
 let npcTemplates = [];
 
 const ASSET_SLOTS = [
-  { key: 'tileset',   label: 'Tileset',        hint: 'Packed 16×16 monochrome tilemap sheet (tilemap_packed.png)' },
-  { key: 'charAtlas', label: 'Character Atlas', hint: '16×16 sprite atlas for heroes, enemies & NPCs' },
+  { key: 'tileset',  label: 'Tileset 1', hint: 'Primary packed 16×16 tilemap sheet — tiles 0 … N₁−1' },
+  { key: 'tileset2', label: 'Tileset 2', hint: 'Optional second 16×16 tilemap sheet — tiles N₁ … N₁+N₂−1' },
 ];
 
 // ── World / Multi-Map State ───────────────────────────────
@@ -2359,11 +2362,11 @@ function customTileIds() {
 function renderPalette() {
   const PAL_W = SHEET_COLS * (PT + PG) + PG;
   const custom = customTileIds();
-  const customRows = custom.length > 0
-    ? Math.ceil(custom.length / SHEET_COLS) + 1   // +1 for label row
-    : 0;
+  const sheet2Rows  = SHEET2_TILE_COUNT > 0 ? Math.ceil(SHEET2_TILE_COUNT / SHEET_COLS) : 0;
+  const customRows  = custom.length > 0 ? Math.ceil(custom.length / SHEET_COLS) : 0;
   const PAL_H = SHEET_ROWS * (PT + PG) + PG
-              + (customRows > 0 ? 14 + customRows * (PT + PG) : 0);
+              + (sheet2Rows  > 0 ? 14 + sheet2Rows  * (PT + PG) : 0)
+              + (customRows  > 0 ? 14 + customRows  * (PT + PG) : 0);
 
   palCanvas.width  = PAL_W;
   palCanvas.height = PAL_H;
@@ -2371,14 +2374,13 @@ function renderPalette() {
   palCtx.fillStyle = '#0e0e0e';
   palCtx.fillRect(0, 0, PAL_W, PAL_H);
 
-  // ── Original 136 tiles ───────────────────────────────────
-  for (let id = 0; id < TOTAL_TILES; id++) {
+  // ── Sheet 1 tiles ─────────────────────────────────────────
+  for (let id = 0; id < SHEET1_TILE_COUNT; id++) {
     const col = id % SHEET_COLS;
     const row = Math.floor(id / SHEET_COLS);
     const px  = PG + col * (PT + PG);
     const py  = PG + row * (PT + PG);
     drawTile(palCtx, id, px, py, PT);
-    // Edited indicator (small dot)
     if (editedTiles.has(id) || tileBaseMap.has(id)) {
       palCtx.fillStyle = '#4fc';
       palCtx.fillRect(px + PT - 5, py + PT - 5, 4, 4);
@@ -2390,24 +2392,48 @@ function renderPalette() {
     }
   }
 
+  let curY = SHEET_ROWS * (PT + PG) + PG;
+
+  // ── Sheet 2 tiles section ─────────────────────────────────
+  if (SHEET2_TILE_COUNT > 0) {
+    palCtx.fillStyle = '#1a2030';
+    palCtx.fillRect(0, curY, PAL_W, 14);
+    palCtx.fillStyle = '#79c';
+    palCtx.font = 'bold 9px Consolas, monospace';
+    palCtx.fillText(`▼ TILESET 2 (IDs ${SHEET1_TILE_COUNT}–${TOTAL_TILES - 1})`, PG + 2, curY + 10);
+    curY += 14;
+
+    for (let i = 0; i < SHEET2_TILE_COUNT; i++) {
+      const id  = SHEET1_TILE_COUNT + i;
+      const col = i % SHEET_COLS;
+      const row = Math.floor(i / SHEET_COLS);
+      const px  = PG + col * (PT + PG);
+      const py  = curY + PG + row * (PT + PG);
+      drawTile(palCtx, id, px, py, PT);
+      if (id === selTile) {
+        palCtx.strokeStyle = '#9ce';
+        palCtx.lineWidth = 2;
+        palCtx.strokeRect(px + 1, py + 1, PT - 2, PT - 2);
+      }
+    }
+    curY += sheet2Rows * (PT + PG);
+  }
+
   // ── Custom tiles section ──────────────────────────────────
   if (custom.length === 0) return;
 
-  const sectionY = SHEET_ROWS * (PT + PG) + PG;
-
-  // Divider + label
   palCtx.fillStyle = '#2a2a2a';
-  palCtx.fillRect(0, sectionY, PAL_W, 14);
+  palCtx.fillRect(0, curY, PAL_W, 14);
   palCtx.fillStyle = '#4b8';
   palCtx.font = 'bold 9px Consolas, monospace';
-  palCtx.fillText('▼ CUSTOM TILES', PG + 2, sectionY + 10);
+  palCtx.fillText('▼ CUSTOM TILES', PG + 2, curY + 10);
+  curY += 14;
 
-  const customBaseY = sectionY + 14;
   custom.forEach((id, i) => {
     const col = i % SHEET_COLS;
     const row = Math.floor(i / SHEET_COLS);
     const px  = PG + col * (PT + PG);
-    const py  = customBaseY + PG + row * (PT + PG);
+    const py  = curY + PG + row * (PT + PG);
     drawTile(palCtx, id, px, py, PT);
     if (id === selTile) {
       palCtx.strokeStyle = '#4fc';
@@ -2905,7 +2931,19 @@ function renderAssetsPanel() {
       const clearBtn = document.createElement('button');
       clearBtn.className = 'tbtn danger';
       clearBtn.textContent = '✕ Remove';
-      clearBtn.onclick = () => { assets[key] = null; renderAssetsPanel(); toast(`${label} removed`); };
+      clearBtn.onclick = () => {
+        assets[key] = null;
+        if (key === 'tileset2') {
+          // Clear sheet2 tile images and shrink TOTAL_TILES back to sheet1 range
+          for (let i = SHEET1_TILE_COUNT; i < TOTAL_TILES; i++) tileImgs[i] = null;
+          tileImgs.length = SHEET1_TILE_COUNT;
+          SHEET2_TILE_COUNT = 0;
+          TOTAL_TILES = SHEET1_TILE_COUNT;
+          renderPalette(); renderPreview(); renderMap();
+        }
+        renderAssetsPanel();
+        toast(`${label} removed`);
+      };
       btnRow.appendChild(clearBtn);
     }
     row.appendChild(btnRow);
@@ -2986,10 +3024,10 @@ function renderAssetsPanel() {
 
 // Slice a packed tileset image (any size) into 16×16 tiles and populate tileImgs[].
 // Automatically detects sheet dimensions from the image size.
-// resetTints: true when importing a fresh tileset manually (all built-in slots
-// reset to DEFAULT_TINT); false when called from loadWorldData so the file's
-// tintTable is respected.
-function loadTilesFromSheet(dataUrl, onDone, resetTints = false) {
+// resetTints  : true when importing a fresh tileset manually (all slots in this
+//               sheet range reset to DEFAULT_TINT).
+// sheetIndex  : 0 = primary tileset (default), 1 = second tileset appended after sheet1.
+function loadTilesFromSheet(dataUrl, onDone, resetTints = false, sheetIndex = 0) {
   const img = new Image();
   img.onload = () => {
     // Detect grid dimensions from image size
@@ -2997,39 +3035,74 @@ function loadTilesFromSheet(dataUrl, onDone, resetTints = false) {
     const rows  = Math.floor(img.height / 16);
     const total = cols * rows;
 
-    // Update globals so the rest of the editor (palette, type table, etc.) adapts
-    SHEET_COLS  = cols;
-    SHEET_ROWS  = rows;
-    TOTAL_TILES = total;
+    if (sheetIndex === 0) {
+      // ── Sheet 1: replaces the primary tile range ────────────────
+      SHEET_COLS       = cols;
+      SHEET_ROWS       = rows;
+      SHEET1_TILE_COUNT = total;
+      TOTAL_TILES      = SHEET1_TILE_COUNT + SHEET2_TILE_COUNT;
 
-    // Rebuild tileImgs to the new size
-    tileImgs = new Array(total).fill(null);
+      // Rebuild tileImgs: preserve any sheet2 entries beyond the new sheet1 range
+      const oldSheet2 = tileImgs.slice(SHEET1_TILE_COUNT); // may be empty
+      tileImgs = new Array(TOTAL_TILES).fill(null);
+      for (let i = 0; i < oldSheet2.length && i < SHEET2_TILE_COUNT; i++)
+        tileImgs[SHEET1_TILE_COUNT + i] = oldSheet2[i];
 
-    // On a fresh manual import: reset every built-in tile slot to no-tint (#ffffff)
-    // so the new sprite colours show unmodified. Custom tile slots (>= total) are untouched.
-    if (resetTints) {
-      for (let i = 0; i < total; i++) tintTable[i] = DEFAULT_TINT;
-    }
-    // Extend tintTable / typeTable for any slots the new sheet adds beyond the current length
-    while (tintTable.length < total) tintTable.push(DEFAULT_TINT);
-    while (typeTable.length < total) typeTable.push(T.WALL);
+      // Reset tints for this sheet range if requested
+      if (resetTints) {
+        for (let i = 0; i < SHEET1_TILE_COUNT; i++) tintTable[i] = DEFAULT_TINT;
+      }
+      // Extend tintTable / typeTable for any new slots
+      while (tintTable.length < TOTAL_TILES) tintTable.push(DEFAULT_TINT);
+      while (typeTable.length < TOTAL_TILES) typeTable.push(T.WALL);
 
-    // nextCustomTileId must be above the new built-in range
-    if (nextCustomTileId < total) nextCustomTileId = total;
+      if (nextCustomTileId < TOTAL_TILES) nextCustomTileId = TOTAL_TILES;
 
-    // Slice every tile out via an offscreen canvas
-    const tmp = document.createElement('canvas');
-    tmp.width = tmp.height = 16;
-    const tc = tmp.getContext('2d');
-    let done = 0;
-    for (let id = 0; id < total; id++) {
-      tc.clearRect(0, 0, 16, 16);
-      tc.drawImage(img, (id % cols) * 16, Math.floor(id / cols) * 16, 16, 16, 0, 0, 16, 16);
-      const url = tmp.toDataURL();
-      const ti = new Image();
-      ti.onload = ti.onerror = () => { if (++done === total) onDone?.(); };
-      ti.src = url;
-      tileImgs[id] = ti;
+      // Slice every tile
+      const tmp = document.createElement('canvas');
+      tmp.width = tmp.height = 16;
+      const tc = tmp.getContext('2d');
+      let done = 0;
+      for (let id = 0; id < SHEET1_TILE_COUNT; id++) {
+        tc.clearRect(0, 0, 16, 16);
+        tc.drawImage(img, (id % cols) * 16, Math.floor(id / cols) * 16, 16, 16, 0, 0, 16, 16);
+        const url = tmp.toDataURL();
+        const ti = new Image();
+        ti.onload = ti.onerror = () => { if (++done === SHEET1_TILE_COUNT) onDone?.(); };
+        ti.src = url;
+        tileImgs[id] = ti;
+      }
+
+    } else {
+      // ── Sheet 2: appended after sheet1 ──────────────────────────
+      SHEET2_COLS       = cols;
+      SHEET2_TILE_COUNT = total;
+      TOTAL_TILES       = SHEET1_TILE_COUNT + SHEET2_TILE_COUNT;
+
+      // Extend tileImgs to accommodate the new tiles
+      while (tileImgs.length < TOTAL_TILES) tileImgs.push(null);
+
+      if (resetTints) {
+        for (let i = SHEET1_TILE_COUNT; i < TOTAL_TILES; i++) tintTable[i] = DEFAULT_TINT;
+      }
+      while (tintTable.length < TOTAL_TILES) tintTable.push(DEFAULT_TINT);
+      while (typeTable.length < TOTAL_TILES) typeTable.push(T.WALL);
+
+      if (nextCustomTileId < TOTAL_TILES) nextCustomTileId = TOTAL_TILES;
+
+      const tmp = document.createElement('canvas');
+      tmp.width = tmp.height = 16;
+      const tc = tmp.getContext('2d');
+      let done = 0;
+      for (let id = 0; id < SHEET2_TILE_COUNT; id++) {
+        tc.clearRect(0, 0, 16, 16);
+        tc.drawImage(img, (id % cols) * 16, Math.floor(id / cols) * 16, 16, 16, 0, 0, 16, 16);
+        const url = tmp.toDataURL();
+        const ti = new Image();
+        ti.onload = ti.onerror = () => { if (++done === SHEET2_TILE_COUNT) onDone?.(); };
+        ti.src = url;
+        tileImgs[SHEET1_TILE_COUNT + id] = ti;
+      }
     }
   };
   img.onerror = () => toast('Could not read tileset image');
@@ -3048,8 +3121,13 @@ function importAsset(key) {
       if (key === 'tileset') {
         loadTilesFromSheet(ev.target.result, () => {
           renderPalette(); renderPreview(); renderMap();
-          toast(`Tileset "${file.name}" loaded — palette updated`);
-        }, true /* resetTints */);
+          toast(`Tileset 1 "${file.name}" loaded — ${SHEET1_TILE_COUNT} tiles`);
+        }, true /* resetTints */, 0);
+      } else if (key === 'tileset2') {
+        loadTilesFromSheet(ev.target.result, () => {
+          renderPalette(); renderPreview(); renderMap();
+          toast(`Tileset 2 "${file.name}" loaded — ${SHEET2_TILE_COUNT} tiles (IDs ${SHEET1_TILE_COUNT}–${TOTAL_TILES - 1})`);
+        }, true /* resetTints */, 1);
       } else {
         const slot = ASSET_SLOTS.find(s => s.key === key);
         toast(`${slot.label}: "${file.name}" loaded`);
@@ -3207,6 +3285,7 @@ function saveFile() {
     typeTable,
     customNames,
     nextCustomTileId,
+    sheet1TileCount: SHEET1_TILE_COUNT,
     customTiles: serializeCustomTiles(),
     assets,
     npcTemplates,
@@ -3229,13 +3308,34 @@ function loadWorldData(data) {
   if (data.customNames)  customNames      = [...data.customNames];
   if (data.nextCustomTileId) nextCustomTileId = data.nextCustomTileId;
   if (data.customTiles)  deserializeCustomTiles(data.customTiles);
-  assets = { tileset: null, charAtlas: null, ...( data.assets || {} ) };
+  assets = { tileset: null, tileset2: null, ...( data.assets || {} ) };
   npcTemplates = Array.isArray(data.npcTemplates) ? [...data.npcTemplates] : [];
+
+  // Restore sheet counts before loading tilesets so sheet2 IDs are offset correctly
+  if (data.sheet1TileCount) {
+    SHEET1_TILE_COUNT = data.sheet1TileCount;
+    SHEET2_TILE_COUNT = 0;
+    TOTAL_TILES = SHEET1_TILE_COUNT;
+  }
+
+  const finishLoad = () => {
+    renderPalette(); renderPreview(); renderMap();
+  };
+
+  const hasTileset2 = !!assets.tileset2?.dataUrl;
+
   if (assets.tileset?.dataUrl) {
     loadTilesFromSheet(assets.tileset.dataUrl, () => {
-      renderPalette(); renderPreview(); renderMap();
-    });
+      if (hasTileset2) {
+        loadTilesFromSheet(assets.tileset2.dataUrl, finishLoad, false, 1);
+      } else {
+        finishLoad();
+      }
+    }, false, 0);
+  } else if (hasTileset2) {
+    loadTilesFromSheet(assets.tileset2.dataUrl, finishLoad, false, 1);
   }
+
   undoStack = []; redoStack = [];
   const startId = data.currentMapId || (worldMaps[0]?.id);
   if (startId && worldMaps.find(m => m.id === startId)) switchToMap(startId);
@@ -3318,10 +3418,10 @@ palCanvas.addEventListener('click', e => {
   const tc = Math.floor((mx - PG) / (PT + PG));
   const tr = Math.floor((my - PG) / (PT + PG));
 
-  // Click in original tile section
+  // Click in sheet 1 section
   if (tc >= 0 && tc < SHEET_COLS && tr >= 0 && tr < SHEET_ROWS) {
     const id = tr * SHEET_COLS + tc;
-    if (id >= 0 && id < TOTAL_TILES) {
+    if (id >= 0 && id < SHEET1_TILE_COUNT) {
       selTile = id;
       if (tool === 'erase') setTool('paint');
       renderPalette(); renderPreview();
@@ -3329,11 +3429,28 @@ palCanvas.addEventListener('click', e => {
     }
   }
 
-  // Click in custom tiles section
+  // Sheet 2 section
+  if (SHEET2_TILE_COUNT > 0) {
+    const s2Y = SHEET_ROWS * (PT + PG) + PG + 14; // after divider label
+    const cy2 = my - s2Y - PG;
+    const cr2 = Math.floor(cy2 / (PT + PG));
+    const cc2 = Math.floor((mx - PG) / (PT + PG));
+    if (cr2 >= 0 && cc2 >= 0 && cc2 < SHEET_COLS) {
+      const idx = cr2 * SHEET_COLS + cc2;
+      if (idx < SHEET2_TILE_COUNT) {
+        selTile = SHEET1_TILE_COUNT + idx;
+        if (tool === 'erase') setTool('paint');
+        renderPalette(); renderPreview();
+        return;
+      }
+    }
+  }
+
+  // Custom tiles section
   const custom = customTileIds();
   if (custom.length === 0) return;
-  const sectionY  = SHEET_ROWS * (PT + PG) + PG;
-  const customBaseY = sectionY + 14;
+  const sheet2SectionH = SHEET2_TILE_COUNT > 0 ? 14 + Math.ceil(SHEET2_TILE_COUNT / SHEET_COLS) * (PT + PG) : 0;
+  const customBaseY = SHEET_ROWS * (PT + PG) + PG + sheet2SectionH + 14;
   const cy = my - customBaseY - PG;
   const cr = Math.floor(cy / (PT + PG));
   const cc = Math.floor((mx - PG) / (PT + PG));
@@ -3352,18 +3469,36 @@ palCanvas.addEventListener('mousemove', e => {
   const my = e.clientY - rect.top;
   const tc = Math.floor((mx - PG) / (PT + PG));
   const tr = Math.floor((my - PG) / (PT + PG));
+
+  // Sheet 1
   if (tc >= 0 && tc < SHEET_COLS && tr >= 0 && tr < SHEET_ROWS) {
     const id = tr * SHEET_COLS + tc;
-    if (id < TOTAL_TILES) {
+    if (id < SHEET1_TILE_COUNT) {
       palCanvas.title = `ID:${id}  ${customNames[id] || ''}`;
       return;
     }
   }
+
+  // Sheet 2
+  if (SHEET2_TILE_COUNT > 0) {
+    const s2Y = SHEET_ROWS * (PT + PG) + PG + 14;
+    const cr2 = Math.floor((my - s2Y - PG) / (PT + PG));
+    const cc2 = Math.floor((mx - PG) / (PT + PG));
+    if (cr2 >= 0 && cc2 >= 0 && cc2 < SHEET_COLS) {
+      const idx = cr2 * SHEET_COLS + cc2;
+      if (idx < SHEET2_TILE_COUNT) {
+        const id = SHEET1_TILE_COUNT + idx;
+        palCanvas.title = `ID:${id}  [Tileset 2]  ${customNames[id] || ''}`;
+        return;
+      }
+    }
+  }
+
   // Custom section
   const custom = customTileIds();
   if (custom.length) {
-    const sectionY   = SHEET_ROWS * (PT + PG) + PG;
-    const customBaseY = sectionY + 14;
+    const sheet2SectionH = SHEET2_TILE_COUNT > 0 ? 14 + Math.ceil(SHEET2_TILE_COUNT / SHEET_COLS) * (PT + PG) : 0;
+    const customBaseY = SHEET_ROWS * (PT + PG) + PG + sheet2SectionH + 14;
     const cr = Math.floor((my - customBaseY - PG) / (PT + PG));
     const cc = Math.floor((mx - PG) / (PT + PG));
     if (cr >= 0 && cc >= 0 && cc < SHEET_COLS) {
@@ -3556,6 +3691,7 @@ document.getElementById('btn-preview').onclick = () => {
   const data = {
     version: 3, currentMapId, maps: worldMaps,
     tintTable, typeTable, customNames, nextCustomTileId,
+    sheet1TileCount: SHEET1_TILE_COUNT,
     customTiles: serializeCustomTiles(), assets, npcTemplates,
   };
   try {
@@ -3662,6 +3798,7 @@ function autosave() {
     const data = {
       version: 3, currentMapId, maps: worldMaps,
       tintTable, typeTable, customNames, nextCustomTileId,
+      sheet1TileCount: SHEET1_TILE_COUNT,
       customTiles: serializeCustomTiles(), assets, npcTemplates,
     };
     localStorage.setItem('editor_world', JSON.stringify(data));

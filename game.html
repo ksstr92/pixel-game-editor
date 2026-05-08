@@ -167,45 +167,28 @@ const TORCHES = [];
 // ════════════════════════════════════════════════════════════════════════════
 // SPRITE ATLAS  (0x72 16×16 DungeonTileset v5)
 // ════════════════════════════════════════════════════════════════════════════
-const SP = {
-  floors: [
-    {x:32, y:48, w:16,h:16},
-    {x:0,  y:32, w:16,h:16},
-    {x:16, y:32, w:16,h:16},
-    {x:32, y:32, w:16,h:16},
-  ],
-  wall_top:   {x:16,  y:0,  w:16,h:16},
-  wall_face:  {x:16,  y:16, w:16,h:16},
-  wall_outer: {x:272, y:0,  w:16,h:16},
-  column_top: {x:208, y:176,w:16,h:16},
-  torches: [
-    {x:129,y:152,w:14,h:23},{x:145,y:152,w:14,h:23},
-    {x:161,y:152,w:14,h:23},{x:177,y:152,w:14,h:23},
-    {x:193,y:152,w:14,h:23},{x:209,y:152,w:14,h:23},
-    {x:225,y:152,w:14,h:23},{x:241,y:152,w:14,h:23},
-  ],
-  hero:     {x:64,  y:128, w:16,h:16},
-  knight:   {x:224, y:236, w:16,h:20},
-  skeleton: {x:16,  y:144, w:16,h:16},
-  goblin:   {x:0,   y:160, w:16,h:16},
-  wizard:   {x:144, y:224, w:16,h:16},
-  merchant: {x:96,  y:240, w:16,h:16},
-};
+// ── Tilesets — loaded from world.json assets (up to 2 sheets) ────────────────
+const monoSheet  = new Image();  let monoReady  = false;
+const monoSheet2 = new Image();  let monoReady2 = false;
+monoSheet.onload   = () => { monoReady  = true; };
+monoSheet2.onload  = () => { monoReady2 = true; };
+monoSheet.onerror  = () => console.warn('Tileset 1 not found.');
+monoSheet2.onerror = () => console.warn('Tileset 2 not found.');
 
-// Sprite assets — loaded from world.json (see Assets panel in editor)
-const sheet = new Image();
-let sheetReady = false;
-sheet.onload  = () => { sheetReady = true; };
-sheet.onerror = () => console.warn('Character atlas not found — using procedural graphics.');
+function monoCol()  { return Math.max(1, Math.floor((monoSheet.naturalWidth  || 272) / 16)); }
+function monoCol2() { return Math.max(1, Math.floor((monoSheet2.naturalWidth || 272) / 16)); }
 
-// ── Monochrome tileset — loaded from world.json assets ────────────────────────
-// Packed 16×16 tiles; column count detected from image width at draw time.
-const monoSheet = new Image();
-let monoReady = false;
-monoSheet.onload  = () => { monoReady = true; };
-monoSheet.onerror = () => console.warn('Monochrome tileset not found.');
-// Always derive columns from the actual loaded image — never hardcode 17.
-function monoCol() { return Math.max(1, Math.floor((monoSheet.naturalWidth  || 272) / 16)); }
+// Number of tiles in sheet 1 alone — tiles with id >= this use sheet 2.
+// Set from worldData.sheet1TileCount when a world file is loaded.
+let sheet1TileCount = 136;
+
+// Returns { sh, mc, localId } for the sheet that owns tile `id`, or null if not ready.
+function getTileSheet(id) {
+  if (id < sheet1TileCount) {
+    return monoReady  ? { sh: monoSheet,  mc: monoCol(),  localId: id } : null;
+  }
+  return monoReady2 ? { sh: monoSheet2, mc: monoCol2(), localId: id - sheet1TileCount } : null;
+}
 
 // Tile IDs from the Monochrome sheet (row×17 + col):
 const MT = {
@@ -230,82 +213,18 @@ const MT = {
 
 // Draw a Monochrome tile tinted with multiply-blend.
 // 1) fill solid tint → 2) multiply tile texture on top.
-// Result: white tile pixels = tint color; dark pixels stay dark.
+// Result: white tile pixels = tint colour; dark pixels stay dark.
 function drawMonoTile(id, dx, dy, tint) {
   ctx.fillStyle = tint;
   ctx.fillRect(dx, dy, TS, TS);
-  if (monoReady) {
+  const si = getTileSheet(id);
+  if (si) {
     ctx.save();
     ctx.globalCompositeOperation = 'multiply';
-    { const mc=monoCol(); ctx.drawImage(monoSheet, (id%mc)*16, Math.floor(id/mc)*16, 16, 16, dx, dy, TS, TS); }
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(si.sh, (si.localId % si.mc) * 16, Math.floor(si.localId / si.mc) * 16, 16, 16, dx, dy, TS, TS);
     ctx.restore();
   }
-}
-
-// Draw one 16×16 sprite stretched to fill a TS×TS tile at (dx,dy)
-function sprTile(s, dx, dy) {
-  ctx.drawImage(sheet, s.x, s.y, s.w, s.h, dx, dy, TS, TS);
-}
-
-// Draw a static entity sprite, feet at (cx, cy)
-function sprEnt(s, cx, cy, flipX=false) {
-  const sc = TS / 16;
-  const dw = s.w * sc, dh = s.h * sc;
-  ctx.save();
-  ctx.translate(cx, cy);
-  if (flipX) ctx.scale(-1, 1);
-  ctx.drawImage(sheet, s.x, s.y, s.w, s.h, -dw/2, -dh, dw, dh);
-  ctx.restore();
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ANIMATED ENTITY SPRITE
-// ════════════════════════════════════════════════════════════════════════════
-function sprEntAnim(s, cx, cy, flipX, state, now, deathP=0) {
-  const sc = TS / 16;
-  const dw = s.w * sc, dh = s.h * sc;
-
-  let offX=0, offY=0, scX=1, scY=1, rot=0;
-
-  switch (state) {
-    case 'idle':
-      offY = Math.sin(now * 0.0024) * 0.9;
-      break;
-    case 'walk': {
-      const f = Math.floor(now / 125) % 4;
-      offY = [0, -1.8, 0,  1.2][f];
-      rot  = [0, -0.07, 0, 0.07][f];
-      scX  = [1,  0.90, 1, 1.10][f];
-      scY  = [1,  1.12, 1, 0.88][f];
-      break;
-    }
-    case 'attack':
-      rot  =  0.28;
-      offY = -2.5;
-      scX  =  1.12;
-      scY  =  0.86;
-      break;
-    case 'hurt':
-      offX = ((Math.floor(now / 32) % 2) * 2 - 1) * 2;
-      break;
-    case 'death': {
-      const p = Math.min(1, deathP * 1.25);
-      rot  = (Math.PI / 2) * p;
-      offY = dh * 0.22 * p;
-      scY  = Math.max(0.45, 1 - 0.45 * p);
-      break;
-    }
-  }
-
-  const groundOff = TS * 0.5;
-
-  ctx.save();
-  ctx.translate(cx + offX, cy + offY + groundOff);
-  if (flipX) ctx.scale(-1, 1);
-  ctx.rotate(rot);
-  ctx.scale(scX, scY);
-  ctx.drawImage(sheet, s.x, s.y, s.w, s.h, -dw/2, -dh, dw, dh);
-  ctx.restore();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -500,10 +419,12 @@ function drawTile(r,c) {
     ctx.fillStyle = tint;
     ctx.fillRect(dx, dy, TS, TS);
     ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.imageSmoothingEnabled = false;
-    const ct    = worldData.customTiles?.[mt];
+    const ct     = worldData.customTiles?.[mt];
     const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : mt;
-    if (baseId >= 0 && monoReady)
-      { const mc=monoCol(); ctx.drawImage(monoSheet, (baseId%mc)*16, Math.floor(baseId/mc)*16, 16, 16, dx, dy, TS, TS); }
+    if (baseId >= 0) {
+      const si = getTileSheet(baseId);
+      if (si) ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, dx, dy, TS, TS);
+    }
     if (ct?.pixels) {
       ctx.globalCompositeOperation = 'source-over';
       const cv = getWorldTileCanvas(mt); if (cv) ctx.drawImage(cv, dx, dy, TS, TS);
@@ -525,11 +446,10 @@ function drawMap() {
     for (let c = c0; c <= c1; c++)
       drawTile(r, c);
   // Overlay layer — drawn on top; skip background fill so base tile shows through
-  if (visualOverlay && monoReady && worldData) {
+  if (visualOverlay && worldData) {
     ctx.save();
     ctx.globalCompositeOperation = 'multiply';
     ctx.imageSmoothingEnabled = false;
-    const mc = monoCol();
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) {
         const ot = visualOverlay[r]?.[c] ?? -1;
@@ -537,8 +457,10 @@ function drawMap() {
         const dx = c*TS - cam.x, dy = r*TS - cam.y;
         const ct = worldData.customTiles?.[ot];
         const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : ot;
-        if (baseId >= 0)
-          ctx.drawImage(monoSheet, (baseId%mc)*16, Math.floor(baseId/mc)*16, 16, 16, dx, dy, TS, TS);
+        if (baseId >= 0) {
+          const si = getTileSheet(baseId);
+          if (si) ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, dx, dy, TS, TS);
+        }
         if (ct?.pixels) {
           ctx.globalCompositeOperation = 'source-over';
           const cv = getWorldTileCanvas(ot); if (cv) ctx.drawImage(cv, dx, dy, TS, TS);
@@ -567,19 +489,11 @@ function drawTorches() {
     ctx.fillStyle=grad;
     ctx.fillRect(sx-glowR, sy-glowR, glowR*2, glowR*2);
 
-    if (sheetReady) {
-      const frame = (Math.floor(now / 100)) % 8;
-      const tf = SP.torches[frame];
-      const scale = TS / 16;
-      const dw = tf.w * scale, dh = tf.h * scale;
-      ctx.drawImage(sheet, tf.x, tf.y, tf.w, tf.h, sx - dw/2, sy - dh, dw, dh);
-    } else {
-      ctx.fillStyle='#6a4a20'; ctx.fillRect(sx-1,sy-5,2,9);
-      ctx.fillStyle=`rgba(255,${130+fl*60|0},20,${0.9*fl})`;
-      ctx.beginPath(); ctx.ellipse(sx,sy-8,3,5*fl,0,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle=`rgba(255,230,100,${0.85*fl})`;
-      ctx.beginPath(); ctx.ellipse(sx,sy-9,1.5,3*fl,0,0,Math.PI*2); ctx.fill();
-    }
+    ctx.fillStyle='#6a4a20'; ctx.fillRect(sx-1,sy-5,2,9);
+    ctx.fillStyle=`rgba(255,${130+fl*60|0},20,${0.9*fl})`;
+    ctx.beginPath(); ctx.ellipse(sx,sy-8,3,5*fl,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=`rgba(255,230,100,${0.85*fl})`;
+    ctx.beginPath(); ctx.ellipse(sx,sy-9,1.5,3*fl,0,0,Math.PI*2); ctx.fill();
   });
 }
 
@@ -678,11 +592,6 @@ function drawKnight(x,y,facingRight,animState='idle') {
 
 // ── Skeleton (enemy) ─────────────────────────────────────────────────────────
 function drawSkeleton(x,y,facingRight,animState='idle',deathP=0) {
-  if (sheetReady) {
-    const sx=x-cam.x, sy=y-cam.y;
-    sprEntAnim(SP.skeleton, sx, sy, !facingRight, animState, Date.now(), deathP);
-    return;
-  }
   const sx=x-cam.x, sy=y-cam.y;
   const flip=facingRight?1:-1, now=Date.now();
   const bone='#d8cfa8', dark='#b0a880';
@@ -730,11 +639,6 @@ function drawSkeleton(x,y,facingRight,animState='idle',deathP=0) {
 
 // ── Goblin (enemy) ───────────────────────────────────────────────────────────
 function drawGoblin(x,y,facingRight,animState='idle',deathP=0) {
-  if (sheetReady) {
-    const sx=x-cam.x, sy=y-cam.y;
-    sprEntAnim(SP.goblin, sx, sy, !facingRight, animState, Date.now(), deathP);
-    return;
-  }
   const sx=x-cam.x, sy=y-cam.y;
   const flip=facingRight?1:-1, now=Date.now();
   const grn='#3a7a2a', dgrn='#286020';
@@ -796,13 +700,15 @@ function drawNPC(x,y,npc) {
       ? (worldData.customTiles[npc.tileId].base >= 0 ? worldData.customTiles[npc.tileId].base : -1)
       : npc.tileId;
     if (baseId >= 0) {
-      const mc = monoCol();
-      // Flip the sprite horizontally when facing left
-      if (!npc.facingRight) { _sprCtx.save(); _sprCtx.translate(TS, 0); _sprCtx.scale(-1, 1); }
-      _sprCtx.drawImage(monoSheet, (baseId % mc) * 16, Math.floor(baseId / mc) * 16, 16, 16, 0, 0, TS, TS);
-      if (!npc.facingRight) _sprCtx.restore();
+      const si = getTileSheet(baseId);
+      if (si) {
+        // Flip the sprite horizontally when facing left
+        if (!npc.facingRight) { _sprCtx.save(); _sprCtx.translate(TS, 0); _sprCtx.scale(-1, 1); }
+        _sprCtx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, 0, 0, TS, TS);
+        if (!npc.facingRight) _sprCtx.restore();
+      }
     }
-    // Draw custom pixel edits on top (source-over so painted pixels replace the mono sprite)
+    // Draw custom pixel edits on top
     const ct = worldData?.customTiles?.[npc.tileId];
     if (ct?.pixels) {
       _sprCtx.globalCompositeOperation = 'source-over';
@@ -813,48 +719,6 @@ function drawNPC(x,y,npc) {
     ctx.save(); ctx.imageSmoothingEnabled = false;
     ctx.drawImage(_sprBuf, dx, dy);
     ctx.restore();
-  } else if (sheetReady) {
-    sprEntAnim(npc.isElder ? SP.wizard : SP.merchant, sx, sy, !npc.facingRight,
-               npc.moving ? 'walk' : 'idle', Date.now());
-  } else {
-  ctx.save();
-  ctx.translate(sx,sy);
-  ctx.scale(SS,SS);
-
-  if (npc.isElder) {
-    ctx.fillStyle='#223399';
-    ctx.beginPath(); ctx.moveTo(-11,-12); ctx.lineTo(11,-12); ctx.lineTo(14,18); ctx.lineTo(-14,18); ctx.fill();
-    ctx.fillStyle='#4466cc'; ctx.fillRect(-9,-11,18,5);
-    ctx.strokeStyle='#88aaff'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.arc(0,0,5,0,Math.PI*2); ctx.stroke();
-    ctx.fillStyle='#7a5a20'; ctx.fillRect(12,-22,3,38);
-    ctx.fillStyle='#ffcc44'; ctx.beginPath(); ctx.arc(13,-24,6,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#ffe888'; ctx.beginPath(); ctx.arc(13,-24,3,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='rgba(150,180,255,0.45)'; ctx.beginPath(); ctx.arc(13,-24,7,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#ddc090'; ctx.beginPath(); ctx.arc(0,-17,8,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#fff';
-    ctx.beginPath(); ctx.moveTo(-6,-13); ctx.lineTo(-8,3); ctx.lineTo(0,1); ctx.lineTo(8,3); ctx.lineTo(6,-13); ctx.fill();
-    ctx.fillStyle='#6688cc';
-    ctx.beginPath(); ctx.arc(-3,-19,1.5,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(3,-19,1.5,0,Math.PI*2);  ctx.fill();
-    ctx.fillStyle='#112277'; ctx.fillRect(-11,-27,22,4);
-    ctx.beginPath(); ctx.moveTo(-7,-27); ctx.lineTo(7,-27); ctx.lineTo(3,-42); ctx.lineTo(-3,-42); ctx.fill();
-    ctx.fillStyle='#ffcc44'; ctx.beginPath(); ctx.arc(0,-41,2,0,Math.PI*2); ctx.fill();
-  } else {
-    ctx.fillStyle='#cc8030'; ctx.fillRect(-8,-10,16,22);
-    ctx.fillStyle='#7a5020'; ctx.fillRect(-7,-9,14,18);
-    ctx.fillStyle='#aa6828'; ctx.fillRect(-6,-6,12,12);
-    ctx.fillStyle='#ddc090'; ctx.beginPath(); ctx.arc(0,-17,8,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#cc3030'; ctx.fillRect(-7,-24,14,6);
-    ctx.fillStyle='#6688cc';
-    ctx.beginPath(); ctx.arc(-3,-19,1.5,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(3,-19,1.5,0,Math.PI*2);  ctx.fill();
-    ctx.fillStyle='#cc2222'; ctx.fillRect(-10,-27,20,4);
-    ctx.beginPath(); ctx.moveTo(-6,-27); ctx.lineTo(6,-27); ctx.lineTo(3,-38); ctx.lineTo(-3,-38); ctx.fill();
-    ctx.fillStyle='#ffdd44';
-    ctx.beginPath(); ctx.moveTo(9,-27); ctx.quadraticCurveTo(16,-33,13,-42); ctx.quadraticCurveTo(10,-35,9,-29); ctx.fill();
-  }
-  ctx.restore();
   }
 
   // [E] Talk prompt (no name label)
@@ -961,9 +825,8 @@ function drawDialog() {
 // ITEMS (world rendering + inventory UI)
 // ════════════════════════════════════════════════════════════════════════════
 function drawMapItems() {
-  if (!monoReady || !worldData) return;
+  if (!worldData) return;
   const now = Date.now();
-  const mc  = monoCol();
 
   for (const item of mapItems) {
     if (item.collected) continue;
@@ -991,7 +854,8 @@ function drawMapItems() {
         _sprCtx.drawImage(ctx.canvas, dx, dy, TS, TS, 0, 0, TS, TS);
         _sprCtx.globalCompositeOperation = 'multiply';
         _sprCtx.imageSmoothingEnabled = false;
-        _sprCtx.drawImage(monoSheet, (baseId % mc) * 16, Math.floor(baseId / mc) * 16, 16, 16, 0, 0, TS, TS);
+        const si = getTileSheet(baseId);
+        if (si) _sprCtx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, 0, 0, TS, TS);
         _sprCtx.globalCompositeOperation = 'source-over';
         ctx.save(); ctx.imageSmoothingEnabled = false;
         ctx.drawImage(_sprBuf, dx, dy);
@@ -1768,8 +1632,9 @@ function applyWorldData(data) {
     throw new Error('Not a valid world file (need version 3)');
   worldData = data;
   worldTileCache.clear();
-  if (data.assets?.tileset?.dataUrl)   { monoReady = false;  monoSheet.src = data.assets.tileset.dataUrl; }
-  if (data.assets?.charAtlas?.dataUrl) { sheetReady = false; sheet.src     = data.assets.charAtlas.dataUrl; }
+  sheet1TileCount = data.sheet1TileCount ?? 136;
+  if (data.assets?.tileset?.dataUrl)  { monoReady  = false; monoSheet.src  = data.assets.tileset.dataUrl;  }
+  if (data.assets?.tileset2?.dataUrl) { monoReady2 = false; monoSheet2.src = data.assets.tileset2.dataUrl; }
   const startId  = data.currentMapId || data.maps[0].id;
   const startMap = data.maps.find(m => m.id === startId) || data.maps[0];
   activateWorldMap(startMap.id);
