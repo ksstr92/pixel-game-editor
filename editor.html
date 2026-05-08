@@ -2858,7 +2858,10 @@ function renderAssetsPanel() {
 
 // Slice a packed tileset image (any size) into 16×16 tiles and populate tileImgs[].
 // Automatically detects sheet dimensions from the image size.
-function loadTilesFromSheet(dataUrl, onDone) {
+// resetTints: true when importing a fresh tileset manually (all built-in slots
+// reset to DEFAULT_TINT); false when called from loadWorldData so the file's
+// tintTable is respected.
+function loadTilesFromSheet(dataUrl, onDone, resetTints = false) {
   const img = new Image();
   img.onload = () => {
     // Detect grid dimensions from image size
@@ -2874,7 +2877,12 @@ function loadTilesFromSheet(dataUrl, onDone) {
     // Rebuild tileImgs to the new size
     tileImgs = new Array(total).fill(null);
 
-    // Extend tintTable / typeTable if the new sheet is larger
+    // On a fresh manual import: reset every built-in tile slot to no-tint (#ffffff)
+    // so the new sprite colours show unmodified. Custom tile slots (>= total) are untouched.
+    if (resetTints) {
+      for (let i = 0; i < total; i++) tintTable[i] = DEFAULT_TINT;
+    }
+    // Extend tintTable / typeTable for any slots the new sheet adds beyond the current length
     while (tintTable.length < total) tintTable.push(DEFAULT_TINT);
     while (typeTable.length < total) typeTable.push(T.WALL);
 
@@ -2913,7 +2921,7 @@ function importAsset(key) {
         loadTilesFromSheet(ev.target.result, () => {
           renderPalette(); renderPreview(); renderMap();
           toast(`Tileset "${file.name}" loaded — palette updated`);
-        });
+        }, true /* resetTints */);
       } else {
         const slot = ASSET_SLOTS.find(s => s.key === key);
         toast(`${slot.label}: "${file.name}" loaded`);
