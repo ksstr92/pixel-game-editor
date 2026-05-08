@@ -3490,12 +3490,19 @@ palCanvas.addEventListener('click', e => {
     }
   }
 });
-// ── Palette hover tooltip ─────────────────────────────────
-const _palTip      = document.getElementById('pal-tooltip');
-const _palTipCv    = document.getElementById('pal-tooltip-canvas');
-const _palTipCtx   = _palTipCv.getContext('2d');
-const _palTipLabel = document.getElementById('pal-tooltip-label');
+// ── Palette hover tooltip (created in JS so ordering vs HTML doesn't matter) ─
 const PAL_TIP_SIZE = 80; // px — 4× the 20px palette tile
+const _palTip = document.createElement('div');
+_palTip.id = 'pal-tooltip';
+_palTip.style.display = 'none';
+const _palTipCv = document.createElement('canvas');
+_palTipCv.width = _palTipCv.height = PAL_TIP_SIZE;
+const _palTipCtx = _palTipCv.getContext('2d');
+const _palTipLabel = document.createElement('div');
+_palTipLabel.id = 'pal-tooltip-label';
+_palTip.appendChild(_palTipCv);
+_palTip.appendChild(_palTipLabel);
+document.body.appendChild(_palTip);
 
 function showPalTooltip(id, clientX, clientY) {
   // Draw the tile at 4× into the tooltip canvas
@@ -3920,10 +3927,5 @@ loadAllTiles(() => {
 });
 </script>
 
-<!-- Palette hover tooltip -->
-<div id="pal-tooltip">
-  <canvas id="pal-tooltip-canvas" width="80" height="80"></canvas>
-  <div id="pal-tooltip-label"></div>
-</div>
 </body>
 </html>
