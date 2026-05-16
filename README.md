@@ -1,4 +1,4 @@
-# Chronicles of the Forgotten Realm — Pixel Game Editor
+# Pixel Game Editor
 
 A self-contained, browser-based RPG world builder and game engine. No installation, no server, no dependencies — open `editor.html` to build your world, click **▶ Preview** to play it instantly.
 
