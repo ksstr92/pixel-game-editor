@@ -2,6 +2,11 @@
 
 A self-contained, browser-based RPG world builder and game engine. No installation, no server, no dependencies — open `editor.html` to build your world, click **▶ Preview** to play it instantly.
 
+### Screenshots
+- <img width="1907" height="941" alt="image" src="https://github.com/user-attachments/assets/ece14898-cff8-406a-8fd9-260393f88587" />
+
+
+
 ---
 
 ## Files
