@@ -55,12 +55,42 @@ body { display: flex; flex-direction: column; }
   min-height: 0;
 }
 
-/* ── SIDEBAR ── */
+/* ── MAPS SIDEBAR (left) ── */
+#maps-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  background: #161616;
+  border-right: 1px solid #2a2a2a;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#maps-sidebar-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+#maps-sidebar-hdr span {
+  color: #555;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#maps-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+/* ── SIDEBAR (right) ── */
 #sidebar {
   width: 388px;
   flex-shrink: 0;
   background: #161616;
-  border-right: 1px solid #2a2a2a;
+  border-left: 1px solid #2a2a2a;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -247,8 +277,8 @@ select.type-sel {
 .editor-label { color: #666; font-size: 10px; margin: 6px 0 2px; }
 #editor-info { color: #777; font-size: 10px; margin: 6px 0; }
 
-/* Maps Panel */
-#maps-panel { padding: 8px; display: none; overflow-y: auto; }
+/* Maps Panel (old tab — kept for JS compat, always hidden now) */
+#maps-panel { display: none !important; }
 .maps-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .maps-hdr span { color: #555; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
 .map-item {
@@ -400,6 +430,11 @@ select.type-sel {
   <div class="sep"></div>
   <button class="tbtn active" id="btn-paint" title="Brush [B]">🖌 Brush</button>
   <button class="tbtn" id="btn-erase" title="Eraser [E]">🧹 Eraser</button>
+  <span id="eraser-size-group" style="display:none;gap:2px;align-items:center;">
+    <button class="tbtn eraser-sz active" data-sz="1"  title="Erase 1×1">1</button>
+    <button class="tbtn eraser-sz"        data-sz="4"  title="Erase 4×4">4</button>
+    <button class="tbtn eraser-sz"        data-sz="8"  title="Erase 8×8">8</button>
+  </span>
   <button class="tbtn" id="btn-fill"  title="Bucket fill [P]">🪣 Bucket</button>
   <button class="tbtn" id="btn-pick"   title="Eyedropper [I]">🔍 Eyedropper</button>
   <button class="tbtn" id="btn-select" title="Select [V] — click waypoints, NPCs, triggers to edit">↖ Select</button>
@@ -417,7 +452,6 @@ select.type-sel {
   <button class="tbtn" id="btn-spawn" style="display:none">⚑ Spawn</button>
   <button class="tbtn" id="btn-npc"   style="display:none">👤 NPC</button>
   <button class="tbtn" id="btn-item"  style="display:none">🎒 Item</button>
-  <button class="tbtn" id="btn-maps"    title="Manage maps">🗺 Maps</button>
   <div class="sep"></div>
   <span style="color:#555;">Zoom:</span>
   <select id="zoom-select" class="type-sel" title="Zoom level">
@@ -440,22 +474,38 @@ select.type-sel {
 
 <!-- MAIN -->
 <div id="main">
+
+  <!-- LEFT: maps list -->
+  <div id="maps-sidebar">
+    <div id="maps-sidebar-hdr">
+      <span>Maps</span>
+      <button class="tbtn mibtn import-btn" onclick="createAndSwitch()" title="New map">+</button>
+    </div>
+    <div id="maps-sidebar-list">
+      <div id="maps-list"></div>
+    </div>
+  </div>
+
+  <!-- CENTER: map canvas -->
+  <div id="map-wrap">
+    <canvas id="map-canvas"></canvas>
+    <canvas id="minimap-canvas" title="Click or drag to pan camera"></canvas>
+  </div>
+
+  <!-- RIGHT: palette + tile info (moved from left) -->
   <div id="sidebar">
     <div id="sidebar-tabs">
       <div class="stab active" id="tab-palette" onclick="switchTab('palette')">Tiles</div>
+      <div class="stab" id="tab-npcs"    onclick="switchTab('npcs')">NPCs</div>
+      <div class="stab" id="tab-items"   onclick="switchTab('items')">Items</div>
       <div class="stab" id="tab-assets"  onclick="switchTab('assets')">Assets</div>
     </div>
 
     <div id="palette-scroll">
       <canvas id="palette-canvas"></canvas>
-      <div id="maps-panel">
-        <div class="maps-hdr">
-          <span>World Maps</span>
-          <button class="tbtn import-btn mibtn" onclick="createAndSwitch()">+ New Map</button>
-        </div>
-        <div id="maps-list"></div>
-      </div>
-
+      <div id="maps-panel"></div>
+      <div id="npcs-panel"   style="display:none;padding:8px;"></div>
+      <div id="items-panel"  style="display:none;padding:8px;"></div>
       <div id="assets-panel" style="display:none;padding:8px;"></div>
     </div>
 
@@ -505,10 +555,6 @@ select.type-sel {
     <div id="status">Mouse: —</div>
   </div>
 
-  <div id="map-wrap">
-    <canvas id="map-canvas"></canvas>
-    <canvas id="minimap-canvas" title="Click or drag to pan camera"></canvas>
-  </div>
 </div>
 
 <input type="file" id="file-input" accept=".json" style="display:none">
@@ -660,16 +706,22 @@ let overlayMap = [];   // second layer: tiles drawn on top with transparent bg
 let tintTable = new Array(TOTAL_TILES).fill(DEFAULT_TINT);
 let typeTable = [...DEFAULT_T];
 
-let selTile  = 0;
-let tool     = 'paint';
-let showGrid = true;
+let selTile    = 0;
+let tool       = 'paint';
+let eraserSize = 1; // 1 | 4 | 8 tiles
+
+// NPC waypoint pick mode — set while picking waypoints on the map
+// { npcRow, npcCol, points:[{row,col}], onUpdate(pts), modalOv, interactive }
+let npcWaypointPickMode = null;
+let showGrid   = true;
 let zoom     = 2;
 
 let camX = 0, camY = 0;
 
-let isPainting = false;
-let isPanning  = false;
-let panOrigin  = { mx:0, my:0, cx:0, cy:0 };
+let isPainting     = false;
+let isPanning      = false;
+let panOrigin      = { mx:0, my:0, cx:0, cy:0 };
+let altEyedropper  = false; // Alt held while paint tool is active → temporary eyedropper
 let lastCell   = { r:-1, c:-1 };
 
 let undoStack = [], redoStack = [];
@@ -682,7 +734,9 @@ let assets = { tileset: null, tileset2: null };
 
 // ── NPC Templates ─────────────────────────────────────────
 // Each: { id, displayName, tileId, portrait: {name, dataUrl}|null }
-let npcTemplates = [];
+let npcTemplates  = [];
+let itemTemplates = [];
+let recipes       = [];
 
 const ASSET_SLOTS = [
   { key: 'tileset',  label: 'Tileset 1', hint: 'Primary packed 16×16 tilemap sheet — tiles 0 … N₁−1' },
@@ -693,6 +747,9 @@ const ASSET_SLOTS = [
 let worldMaps     = [];   // [{ id, name, cols, rows, tileMap }]
 let currentMapId  = null;
 function genMapId() { return 'map_' + Math.random().toString(36).slice(2, 9); }
+
+// Temporary blob URLs for audio preview — keyed by filename, session-only (not saved to world JSON)
+const _musicBlobUrls = new Map();
 
 // ── Tile Editor State ────────────────────────────────────────
 const editedTiles = new Map(); // tileId -> ImageData  (user-drawn edits layer)
@@ -983,7 +1040,7 @@ function renderMapsList() {
       spLbl.title = 'Use the Spawn tool (S) to move this';
       const spBtn = document.createElement('button');
       spBtn.className = 'tbtn mibtn'; spBtn.textContent = '✏'; spBtn.title = 'Activate spawn tool';
-      spBtn.onclick = () => { setTool('spawn'); switchTab('palette'); closeMapsPopup(); toast('Click any cell to set the player spawn'); };
+      spBtn.onclick = () => { setTool('spawn'); toast('Click any cell to set the player spawn'); };
       spEl.append(spLbl, spBtn);
       list.appendChild(spEl);
     }
@@ -1051,11 +1108,13 @@ function renderMapsList() {
         const trigEl = document.createElement('div');
         trigEl.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 6px 3px 18px;font-size:10px;border-left:2px solid #7a4a00;margin-bottom:2px;';
 
-        const evtIcons = (trig.events||[]).map(e => ({dialog:'💬',cameraPan:'📷',tileChange:'🔲'})[e.type]||'?').join('');
-        const act  = trig.activation === 'walk' ? '🚶' : '[E]';
+        const evtIcons = (trig.events||[]).map(e => ({dialog:'💬',cameraPan:'📷',tileChange:'🔲',setTimeOfDay:'🕐',transitionToMap:'🚪'})[e.type]||'?').join('');
+        const act  = trig.activation === 'walk' ? '🚶' : trig.activation === 'mapload' ? '🗺' : '[E]';
         const lbl3 = document.createElement('span');
         lbl3.style.cssText = 'flex:1;color:#ff9a00;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;';
-        lbl3.textContent = `${evtIcons||'⚡'} ${trig.title || '(untitled)'} ${act} (${trig.row},${trig.col})`;
+        lbl3.textContent = trig.activation === 'mapload'
+          ? `${evtIcons||'⚡'} ${act} on load (${trig.row},${trig.col})`
+          : `${evtIcons||'⚡'} ${trig.title || '(untitled)'} ${act} (${trig.row},${trig.col})`;
         lbl3.title = `${trig.events?.length ?? 0} event(s) at (${trig.row},${trig.col})${trig.oneShot ? ' • one-shot' : ''}`;
 
         const editBtnT = document.createElement('button');
@@ -1098,6 +1157,90 @@ function renderMapsList() {
 
         itemEl.append(lbl4, editBtnI, delBtnI);
         list.appendChild(itemEl);
+      });
+    }
+
+    // ── Music list under the active map ──────────────────
+    if (m.id === currentMapId) {
+      if (!m.music) m.music = [];
+
+      // Header row with "+ Add" button
+      const musicHdr = document.createElement('div');
+      musicHdr.style.cssText = 'display:flex;align-items:center;gap:4px;padding:5px 6px 3px 8px;font-size:10px;border-top:1px solid #1e1e1e;margin-top:4px;';
+      const musicHdrLbl = document.createElement('span');
+      musicHdrLbl.style.cssText = 'flex:1;color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;';
+      musicHdrLbl.textContent = '🎵 Music';
+      const musicHint = document.createElement('span');
+      musicHint.style.cssText = 'color:#333;font-size:9px;margin-right:4px;';
+      musicHint.textContent = 'place files in music/';
+      musicHint.title = 'Audio files must be in a "music" folder next to game.html';
+
+      // Hidden file input — only reads filename, does NOT embed audio data in world JSON
+      const musicFileInp = document.createElement('input');
+      musicFileInp.type = 'file'; musicFileInp.accept = 'audio/*'; musicFileInp.multiple = true; musicFileInp.style.display = 'none';
+      musicFileInp.addEventListener('change', () => {
+        Array.from(musicFileInp.files).forEach(file => {
+          // Only store the filename — game loads from music/<name> at runtime
+          if (!m.music.some(t => t.name === file.name)) {
+            m.music.push({ name: file.name });
+          }
+          // Read file as dataUrl into memory for in-session preview only (not saved to JSON).
+          // dataUrl avoids all file:// security restrictions that blob: URLs trigger.
+          if (!_musicBlobUrls.has(file.name)) {
+            const reader = new FileReader();
+            reader.onload = ev => { _musicBlobUrls.set(file.name, ev.target.result); };
+            reader.readAsDataURL(file);
+          }
+        });
+        musicFileInp.value = '';
+        renderMapsList();
+      });
+
+      const addMusicBtn = document.createElement('button');
+      addMusicBtn.className = 'tbtn import-btn'; addMusicBtn.textContent = '+ Add Track'; addMusicBtn.style.fontSize = '10px';
+      addMusicBtn.onclick = () => musicFileInp.click();
+
+      musicHdr.append(musicHdrLbl, musicHint, musicFileInp, addMusicBtn);
+      list.appendChild(musicHdr);
+
+      // One row per track
+      m.music.forEach((track, ti) => {
+        const trackEl = document.createElement('div');
+        trackEl.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 6px 3px 18px;font-size:10px;border-left:2px solid #1a3a2a;margin-bottom:2px;';
+
+        const lbl5 = document.createElement('span');
+        lbl5.style.cssText = 'flex:1;color:#7ca;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;';
+        lbl5.textContent = `♪ ${track.name}`;
+        lbl5.title = `music/${track.name}`;
+
+        // ▶ / ■ preview toggle — uses in-memory dataUrl loaded when file was added this session
+        const playBtn = document.createElement('button');
+        playBtn.className = 'tbtn mibtn'; playBtn.textContent = '▶'; playBtn.title = 'Preview';
+        playBtn.onclick = () => {
+          if (playBtn._previewAudio) {
+            playBtn._previewAudio.pause();
+            playBtn._previewAudio = null;
+            playBtn.textContent = '▶';
+            return;
+          }
+          const src = _musicBlobUrls.get(track.name);
+          if (!src) {
+            toast('Re-add the track to preview (file data is session-only)');
+            return;
+          }
+          const a = new Audio(src);
+          playBtn._previewAudio = a;
+          playBtn.textContent = '■';
+          a.play();
+          a.addEventListener('ended', () => { playBtn._previewAudio = null; playBtn.textContent = '▶'; });
+        };
+
+        const delBtnM = document.createElement('button');
+        delBtnM.className = 'tbtn mibtn danger'; delBtnM.textContent = '✕'; delBtnM.title = 'Remove track';
+        delBtnM.onclick = () => { m.music.splice(ti, 1); renderMapsList(); };
+
+        trackEl.append(lbl5, playBtn, delBtnM);
+        list.appendChild(trackEl);
       });
     }
   });
@@ -1211,6 +1354,189 @@ function openExitModal(fromRow, fromCol) {
   ov.appendChild(box); document.body.appendChild(ov);
 }
 
+// ── Tile picker popup (shared by NPC / Item modals) ───────
+
+function openTilePicker(anchorEl, currentTileId, onSelect) {
+  document.getElementById('_tile-picker')?.remove();
+
+  const PPT = 22, PPG = 2; // tile size / gap inside picker
+  const PAL_W = SHEET_COLS * (PPT + PPG) + PPG;
+  const custom = customTileIds();
+  const sheet2Rows = SHEET2_TILE_COUNT > 0 ? Math.ceil(SHEET2_TILE_COUNT / SHEET_COLS) : 0;
+  const customRows  = custom.length > 0   ? Math.ceil(custom.length   / SHEET_COLS) : 0;
+  const PAL_H = SHEET_ROWS * (PPT + PPG) + PPG
+              + (sheet2Rows > 0 ? 14 + sheet2Rows * (PPT + PPG) : 0)
+              + (customRows  > 0 ? 14 + customRows  * (PPT + PPG) : 0);
+
+  // Build canvas + tile-rect map
+  const c = document.createElement('canvas');
+  c.width = PAL_W; c.height = PAL_H;
+  c.style.cssText = 'display:block;image-rendering:pixelated;cursor:crosshair;';
+  const cc = c.getContext('2d');
+  cc.imageSmoothingEnabled = false;
+  cc.fillStyle = '#0e0e0e'; cc.fillRect(0, 0, PAL_W, PAL_H);
+
+  const rects = []; // {id,x,y}
+  function pdraw(id, px, py) {
+    drawTile(cc, id, px, py, PPT);
+    rects.push({ id, x: px, y: py });
+    if (id === currentTileId) {
+      cc.strokeStyle = '#fc8'; cc.lineWidth = 2;
+      cc.strokeRect(px + 1, py + 1, PPT - 2, PPT - 2);
+    }
+  }
+
+  for (let id = 0; id < SHEET1_TILE_COUNT; id++) {
+    const col = id % SHEET_COLS, row = Math.floor(id / SHEET_COLS);
+    pdraw(id, PPG + col * (PPT + PPG), PPG + row * (PPT + PPG));
+  }
+
+  let curY = SHEET_ROWS * (PPT + PPG) + PPG;
+
+  if (SHEET2_TILE_COUNT > 0) {
+    cc.fillStyle = '#1a2030'; cc.fillRect(0, curY, PAL_W, 14);
+    cc.fillStyle = '#79c'; cc.font = 'bold 9px Consolas, monospace';
+    cc.fillText(`▼ TILESET 2 (${SHEET1_TILE_COUNT}–${TOTAL_TILES - 1})`, PPG + 2, curY + 10);
+    curY += 14;
+    for (let i = 0; i < SHEET2_TILE_COUNT; i++) {
+      const id = SHEET1_TILE_COUNT + i, col = i % SHEET_COLS, row = Math.floor(i / SHEET_COLS);
+      pdraw(id, PPG + col * (PPT + PPG), curY + PPG + row * (PPT + PPG));
+    }
+    curY += sheet2Rows * (PPT + PPG);
+  }
+
+  if (custom.length > 0) {
+    cc.fillStyle = '#2a2a2a'; cc.fillRect(0, curY, PAL_W, 14);
+    cc.fillStyle = '#4b8'; cc.font = 'bold 9px Consolas, monospace';
+    cc.fillText('▼ CUSTOM TILES', PPG + 2, curY + 10);
+    curY += 14;
+    custom.forEach((id, i) => {
+      const col = i % SHEET_COLS, row = Math.floor(i / SHEET_COLS);
+      pdraw(id, PPG + col * (PPT + PPG), curY + PPG + row * (PPT + PPG));
+    });
+  }
+
+  // Popup shell
+  const popup = document.createElement('div');
+  popup.id = '_tile-picker';
+  popup.style.cssText = 'position:fixed;z-index:9999;background:#141414;border:1px solid #555;border-radius:4px;box-shadow:0 6px 24px rgba(0,0,0,0.85);display:flex;flex-direction:column;';
+
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'padding:4px 8px;color:#888;font-size:10px;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;';
+  const hdrLbl = document.createElement('span'); hdrLbl.textContent = 'Select tile';
+  const closeBtn = document.createElement('button'); closeBtn.className = 'tbtn'; closeBtn.textContent = '✕';
+  closeBtn.style.cssText = 'padding:1px 5px;font-size:10px;';
+  hdr.append(hdrLbl, closeBtn);
+
+  const scroll = document.createElement('div');
+  scroll.style.cssText = 'overflow:auto;max-height:380px;';
+  scroll.appendChild(c);
+
+  popup.append(hdr, scroll);
+  document.body.appendChild(popup);
+
+  // Position near anchor
+  const ar = anchorEl.getBoundingClientRect();
+  let left = ar.left, top = ar.bottom + 4;
+  const pw = popup.offsetWidth, ph = popup.offsetHeight;
+  if (left + pw > window.innerWidth  - 8) left = window.innerWidth  - pw - 8;
+  if (top  + ph > window.innerHeight - 8) top  = ar.top - ph - 4;
+  if (left < 4) left = 4;
+  if (top  < 4) top  = 4;
+  popup.style.left = left + 'px'; popup.style.top = top + 'px';
+
+  // Click to pick
+  c.addEventListener('click', e => {
+    const r = c.getBoundingClientRect();
+    const cx = (e.clientX - r.left) * (PPT + PPG); // scale doesn't apply (1:1 render)
+    const cy = (e.clientY - r.top);
+    // recompute with proper scale
+    const sx = (e.clientX - r.left) * (c.width  / r.width);
+    const sy = (e.clientY - r.top)  * (c.height / r.height);
+    const hit = rects.find(t => sx >= t.x && sx < t.x + PPT && sy >= t.y && sy < t.y + PPT);
+    if (hit) { onSelect(hit.id); cleanup(); popup.remove(); }
+  });
+
+  // Close handlers
+  function cleanup() {
+    document.removeEventListener('mousedown', outsideClick);
+    document.removeEventListener('keydown', onEsc);
+  }
+  function outsideClick(e) {
+    if (!popup.isConnected) { cleanup(); return; }
+    if (!popup.contains(e.target) && e.target !== anchorEl) { popup.remove(); cleanup(); }
+  }
+  function onEsc(e) { if (e.key === 'Escape') { popup.remove(); cleanup(); } }
+  closeBtn.addEventListener('click', () => { popup.remove(); cleanup(); });
+  setTimeout(() => {
+    document.addEventListener('mousedown', outsideClick);
+    document.addEventListener('keydown', onEsc);
+  }, 0);
+}
+
+// Helper: make a tilePrev canvas open the picker on click
+function wirePickerToPreview(tilePrev, getTileId, setTileId) {
+  tilePrev.title = 'Click to select tile';
+  tilePrev.style.cursor = 'pointer';
+  tilePrev.addEventListener('mouseover', () => { tilePrev.style.outline = '2px solid #fc8'; });
+  tilePrev.addEventListener('mouseout',  () => { tilePrev.style.outline = ''; });
+  tilePrev.addEventListener('click', () => openTilePicker(tilePrev, getTileId(), setTileId));
+}
+
+// ── Waypoint pick toolbar ──────────────────────────────────
+function showWpPickToolbar(onDone) {
+  document.getElementById('_wp-toolbar')?.remove();
+  const bar = document.createElement('div');
+  bar.id = '_wp-toolbar';
+  bar.style.cssText = [
+    'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);',
+    'z-index:9999;background:#0a1522;border:1px solid #44ccff;border-radius:6px;',
+    'padding:8px 14px;display:flex;align-items:center;gap:10px;',
+    'box-shadow:0 4px 24px rgba(0,0,0,0.9);font-size:11px;color:#888;',
+    'white-space:nowrap;user-select:none;',
+  ].join('');
+
+  const lbl = document.createElement('span');
+  lbl.innerHTML = '<b style="color:#44ccff">L-click</b> add &nbsp;·&nbsp; '
+                + '<b style="color:#f88">R-click</b> undo last &nbsp;·&nbsp; '
+                + '<b style="color:#888">Alt+drag</b> pan';
+
+  const cntSpan = document.createElement('span');
+  cntSpan.style.cssText = 'color:#9db;font-weight:bold;min-width:68px;text-align:center;';
+
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'tbtn danger'; clearBtn.textContent = 'Clear';
+  clearBtn.style.cssText = 'padding:2px 8px;font-size:10px;';
+
+  const doneBtn = document.createElement('button');
+  doneBtn.className = 'tbtn'; doneBtn.textContent = '✓ Done';
+  doneBtn.style.cssText = 'background:#0a3020;color:#5fca;padding:3px 10px;';
+
+  function updateCount() {
+    const n = npcWaypointPickMode?.points?.length ?? 0;
+    cntSpan.textContent = `${n} waypoint${n === 1 ? '' : 's'}`;
+  }
+  updateCount();
+
+  // Wrap onUpdate so count stays in sync
+  if (npcWaypointPickMode) {
+    const orig = npcWaypointPickMode.onUpdate;
+    npcWaypointPickMode.onUpdate = pts => { orig(pts); updateCount(); };
+  }
+
+  clearBtn.onclick = () => {
+    if (npcWaypointPickMode) {
+      npcWaypointPickMode.points = [];
+      npcWaypointPickMode.onUpdate([]);
+      renderMap(); updateCount();
+    }
+  };
+  doneBtn.onclick = () => { bar.remove(); onDone(); };
+
+  bar.append(lbl, cntSpan, clearBtn, doneBtn);
+  document.body.appendChild(bar);
+}
+
 // ── NPC modal ─────────────────────────────────────────────
 
 function openNpcModal(row, col) {
@@ -1317,6 +1643,7 @@ function openNpcModal(row, col) {
   }
   tileIdInp.addEventListener('input', updateTilePreview);
   updateTilePreview();
+  wirePickerToPreview(tilePrev, () => parseInt(tileIdInp.value), id => { tileIdInp.value = id; updateTilePreview(); });
   tileRow.append(tileLbl, tilePrev, tileIdInp, useSelBtn, overlayNote);
 
   // ── Template onChange: auto-fill fields ──────────────────
@@ -1372,6 +1699,7 @@ function openNpcModal(row, col) {
       if (idx >= 0) cur.npcs.splice(idx, 1);
       // Remove overlay tile placed by template (if any)
       if (overlayMap[row]?.[col] >= 0) overlayMap[row][col] = -1;
+      npcWaypointPickMode = null; document.getElementById('_wp-toolbar')?.remove();
       ov.remove(); renderMap(); renderMapsList(); toast('NPC removed');
     });
     delBtn.style.marginRight = 'auto';
@@ -1379,7 +1707,7 @@ function openNpcModal(row, col) {
   }
 
   btns.append(
-    makeBtn2('Cancel', '#2a2a2a', '#aaa', () => ov.remove()),
+    makeBtn2('Cancel', '#2a2a2a', '#aaa', () => { npcWaypointPickMode = null; document.getElementById('_wp-toolbar')?.remove(); ov.remove(); }),
     makeBtn2(existing ? 'Save' : 'Add NPC', '#1a3a45', '#3ab8dc', () => {
       const name   = nameInp.value.trim() || 'Villager';
       const tileId = Math.max(-1, parseInt(tileIdInp.value, 10) || -1);
@@ -1435,8 +1763,12 @@ function openNpcModal(row, col) {
       if (existing) {
         Object.assign(existing, npcData);
       } else {
+        // Clear any tile painted at this cell — the NPC entity is the visual,
+        // a background tile of the same sprite would cause a static ghost in-game.
+        if (cur.tileMap?.[row]) cur.tileMap[row][col] = -1;
         cur.npcs.push({ id: 'npc_' + genMapId(), row, col, ...npcData });
       }
+      npcWaypointPickMode = null; document.getElementById('_wp-toolbar')?.remove();
       ov.remove(); renderMap(); renderMapsList();
       toast(existing ? `NPC "${name}" updated` : `NPC "${name}" placed at (${row}, ${col})`);
     })
@@ -1485,15 +1817,53 @@ function openNpcModal(row, col) {
   wpLbl.style.cssText = 'color:#aaa;font-size:10px;margin-bottom:3px;';
   wpLbl.textContent = 'Waypoints — one "row,col" per line (NPC spawn is point 0, then these):';
   const wpTA = document.createElement('textarea');
-  wpTA.style.cssText='background:#111;color:#9db;border:1px solid #2a2a2a;font-family:monospace;font-size:11px;padding:6px;resize:vertical;min-height:68px;width:100%;';
+  wpTA.style.cssText = 'background:#111;color:#9db;border:1px solid #2a2a2a;font-family:monospace;font-size:11px;padding:6px;resize:vertical;min-height:68px;width:100%;box-sizing:border-box;';
   wpTA.placeholder = '3,5\n3,10\n8,10\n8,5';
   wpTA.value = (existingPatrol.points ?? []).map(p => `${p.row},${p.col}`).join('\n');
-  wpWrap.append(wpLbl, wpTA);
+
+  function parseWpPoints(str) {
+    return str.split('\n').map(s => s.trim()).filter(Boolean)
+      .map(s => { const [r, c] = s.split(',').map(Number); return { row: r|0, col: c|0 }; })
+      .filter(p => !isNaN(p.row) && !isNaN(p.col));
+  }
+
+  // Keep live preview in sync while user edits the textarea
+  wpTA.addEventListener('input', () => {
+    if (npcWaypointPickMode) { npcWaypointPickMode.points = parseWpPoints(wpTA.value); renderMap(); }
+  });
+
+  // "Pick on map" button — hides modal, enters interactive pick mode
+  const pickWpBtn = document.createElement('button');
+  pickWpBtn.className = 'tbtn'; pickWpBtn.textContent = '⊕ Pick on map';
+  pickWpBtn.style.cssText = 'background:#0a1a2a;color:#44ccff;font-size:10px;margin-top:4px;width:100%;box-sizing:border-box;';
+  pickWpBtn.onclick = () => {
+    if (npcWaypointPickMode) npcWaypointPickMode.points = parseWpPoints(wpTA.value);
+    else npcWaypointPickMode = { npcRow: row, npcCol: col, points: parseWpPoints(wpTA.value), onUpdate: () => {}, interactive: false };
+    npcWaypointPickMode.modalOv   = ov;
+    npcWaypointPickMode.onUpdate  = pts => { wpTA.value = pts.map(p => `${p.row},${p.col}`).join('\n'); };
+    npcWaypointPickMode.interactive = true;
+    ov.style.display = 'none';
+    renderMap();
+    showWpPickToolbar(() => {
+      ov.style.display = '';
+      if (npcWaypointPickMode) npcWaypointPickMode.interactive = false;
+      renderMap();
+    });
+  };
+
+  wpWrap.append(wpLbl, wpTA, pickWpBtn);
 
   function refreshPatrolUI() {
     const v = patrolTypeSel.value;
-    wanderWrap.style.display = v === 'wander'    ? '' : 'none';
-    wpWrap.style.display     = v === 'waypoint'  ? '' : 'none';
+    wanderWrap.style.display = v === 'wander'   ? '' : 'none';
+    wpWrap.style.display     = v === 'waypoint' ? '' : 'none';
+    // Set or clear waypoint preview
+    if (v === 'waypoint') {
+      npcWaypointPickMode = { npcRow: row, npcCol: col, points: parseWpPoints(wpTA.value), onUpdate: () => {}, interactive: false };
+    } else {
+      if (npcWaypointPickMode && !npcWaypointPickMode.interactive) npcWaypointPickMode = null;
+    }
+    renderMap();
   }
   patrolTypeSel.addEventListener('change', refreshPatrolUI);
   refreshPatrolUI();
@@ -1617,7 +1987,12 @@ function openNpcModal(row, col) {
 
   box.append(h3, tmplWrap, nameRow, tileRow, dialogLbl, dialogTA, patrolWrap, schedWrap, btns);
   ov.appendChild(box); document.body.appendChild(ov);
-  ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
+  ov.addEventListener('mousedown', e => {
+    if (e.target === ov) {
+      npcWaypointPickMode = null; document.getElementById('_wp-toolbar')?.remove();
+      ov.remove(); renderMap();
+    }
+  });
   nameInp.focus(); nameInp.select();
 }
 
@@ -1791,12 +2166,14 @@ function renderTriggerOverlays() {
       mapCtx.fillStyle = st.label;
       mapCtx.fillText(st.icon, dx + ts / 2, dy + ts / 2);
 
-      // Small 'E' badge in bottom-right if interact-activation
+      // Activation badge in bottom-right
+      const bfs = Math.min(ts * 0.22, 9);
+      mapCtx.font = `bold ${bfs}px monospace`;
+      mapCtx.fillStyle = '#ffffff';
       if (trig.activation === 'interact') {
-        const bfs = Math.min(ts * 0.22, 9);
-        mapCtx.font = `bold ${bfs}px monospace`;
-        mapCtx.fillStyle = '#ffffff';
         mapCtx.fillText('E', dx + ts - bfs, dy + ts - bfs * 0.5);
+      } else if (trig.activation === 'mapload') {
+        mapCtx.fillText('↺', dx + ts - bfs, dy + ts - bfs * 0.5);
       }
       mapCtx.restore();
     }
@@ -1909,6 +2286,30 @@ function openItemModal(row, col) {
   h3.textContent = existing ? `Edit Item (${row}, ${col})` : `Place Item at (${row}, ${col})`;
   h3.style.color = '#ffcc44';
 
+  // ── Template selector ────────────────────────────────────
+  const tmplWrapI = document.createElement('div');
+  tmplWrapI.style.cssText = 'background:#1a1a1a;border:1px solid #2a2a2a;padding:8px;border-radius:3px;';
+  const tmplRowI = document.createElement('div');
+  tmplRowI.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const tmplLblI = document.createElement('label');
+  tmplLblI.textContent = 'Template:';
+  tmplLblI.style.cssText = 'color:#888;min-width:80px;font-size:11px;';
+  const tmplSelI = document.createElement('select');
+  tmplSelI.className = 'type-sel'; tmplSelI.style.flex = '1';
+  const noOptI = document.createElement('option');
+  noOptI.value = ''; noOptI.textContent = '— None (manual) —'; tmplSelI.appendChild(noOptI);
+  itemTemplates.forEach(t => {
+    const o = document.createElement('option'); o.value = t.id;
+    o.textContent = t.name;
+    if (existing?.templateId === t.id) o.selected = true;
+    tmplSelI.appendChild(o);
+  });
+  const tmplNoteI = document.createElement('div');
+  tmplNoteI.style.cssText = 'color:#444;font-size:10px;margin-top:4px;';
+  tmplNoteI.textContent = 'Choose a template to auto-fill fields, or fill manually.';
+  tmplRowI.append(tmplLblI, tmplSelI);
+  tmplWrapI.append(tmplRowI, tmplNoteI);
+
   // ── Name ─────────────────────────────────────────────────
   const nameRow = document.createElement('div');
   nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
@@ -1950,6 +2351,7 @@ function openItemModal(row, col) {
     }
   }
   tileIdInp.addEventListener('input', refreshItemPrev); refreshItemPrev();
+  wirePickerToPreview(tilePrev, () => parseInt(tileIdInp.value), id => { tileIdInp.value = id; refreshItemPrev(); });
   tileRow.append(tileLbl, tilePrev, tileIdInp, useSelBtnI);
 
   // ── Description ──────────────────────────────────────────
@@ -1974,6 +2376,23 @@ function openItemModal(row, col) {
   });
   pickRow.append(pickLbl, pickSel);
 
+  // Wire template selector → auto-fill fields (must be after descInp + pickSel are declared)
+  tmplSelI.addEventListener('change', () => {
+    const tmpl = itemTemplates.find(t => t.id === tmplSelI.value) ?? null;
+    if (tmpl) {
+      nameInp.value   = tmpl.name;
+      descInp.value   = tmpl.description ?? '';
+      tileIdInp.value = tmpl.tileId ?? -1;
+      pickSel.value   = tmpl.pickup  ?? 'interact';
+      refreshItemPrev();
+      tmplNoteI.textContent = `Using template "${tmpl.name}" — fields auto-filled.`;
+      tmplNoteI.style.color = '#ffcc44';
+    } else {
+      tmplNoteI.textContent = 'Choose a template to auto-fill fields, or fill manually.';
+      tmplNoteI.style.color = '#444';
+    }
+  });
+
   // ── Buttons ──────────────────────────────────────────────
   const btns = document.createElement('div'); btns.className = 'modal-btns';
   if (existing) {
@@ -1988,21 +2407,22 @@ function openItemModal(row, col) {
   btns.append(
     makeBtn('Cancel', '#2a2a2a', '#444', () => ov.remove()),
     makeBtn(existing ? 'Save' : 'Place Item', '#2a2800', '#888800', () => {
-      const name = nameInp.value.trim() || 'Item';
-      const tileId = Math.max(-1, parseInt(tileIdInp.value,10)||0);
+      const name        = nameInp.value.trim() || 'Item';
+      const tileId      = Math.max(-1, parseInt(tileIdInp.value,10)||0);
       const description = descInp.value.trim();
-      const pickup = pickSel.value;
+      const pickup      = pickSel.value;
+      const templateId  = tmplSelI.value || undefined;
       if (existing) {
-        Object.assign(existing, { name, tileId, description, pickup });
+        Object.assign(existing, { name, tileId, description, pickup, templateId });
       } else {
-        cur.items.push({ id: 'item_'+genMapId(), row, col, name, tileId, description, pickup });
+        cur.items.push({ id: 'item_'+genMapId(), row, col, name, tileId, description, pickup, templateId });
       }
       ov.remove(); renderMap(); renderMapsList();
       toast(existing ? `Item "${name}" updated` : `Item "${name}" placed at (${row}, ${col})`);
     })
   );
 
-  box.append(h3, nameRow, tileRow, descLbl, descInp, pickRow, btns);
+  box.append(h3, tmplWrapI, nameRow, tileRow, descLbl, descInp, pickRow, btns);
   ov.appendChild(box); document.body.appendChild(ov);
   ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
   nameInp.focus(); nameInp.select();
@@ -2054,7 +2474,7 @@ function openTriggerModal(row, col) {
   // ── Activation ───────────────────────────────────────────
   const actRow = mkRow('Trigger when:');
   const actSel = document.createElement('select'); actSel.style.cssText = SS;
-  [['interact','[E] Interact'],['walk','🚶 Walk-over']]
+  [['interact','[E] Interact'],['walk','🚶 Walk-over'],['mapload','🗺 On map load']]
     .forEach(([v,l]) => { const o = document.createElement('option'); o.value=v; o.textContent=l; actSel.appendChild(o); });
   actSel.value = existing?.activation ?? 'interact';
   actRow.appendChild(actSel);
@@ -2066,6 +2486,13 @@ function openTriggerModal(row, col) {
   titleInp.placeholder = 'Ancient Stone, Village Well…';
   titleInp.style.cssText = 'flex:1;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
   titleRow.appendChild(titleInp);
+
+  // Hide title row for mapload (no tile to label)
+  function syncActUI() {
+    titleRow.style.display = actSel.value === 'mapload' ? 'none' : '';
+  }
+  actSel.addEventListener('change', syncActUI);
+  syncActUI();
 
   // ── One-shot ──────────────────────────────────────────────
   const oneShotRow = document.createElement('div'); oneShotRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
@@ -2083,22 +2510,80 @@ function openTriggerModal(row, col) {
 
   function renderEventsList() {
     eventsList.innerHTML = '';
+    let dragSrcIdx = -1;
 
     events.forEach((evt, i) => {
       const card = document.createElement('div');
       card.style.cssText = 'background:#1a1a1a;border:1px solid #333;border-radius:3px;padding:8px;';
+      card.draggable = true;
+
+      // ── Drag-and-drop reorder ─────────────────────────────
+      card.addEventListener('dragstart', e => {
+        dragSrcIdx = i;
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => { card.style.opacity = '0.35'; }, 0);
+      });
+      card.addEventListener('dragend', () => {
+        card.style.opacity = '';
+        eventsList.querySelectorAll('[data-dnd-over]').forEach(el => {
+          el.style.outline = ''; el.removeAttribute('data-dnd-over');
+        });
+      });
+      card.addEventListener('dragover', e => {
+        e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+        if (dragSrcIdx === i) return;
+        eventsList.querySelectorAll('[data-dnd-over]').forEach(el => {
+          el.style.outline = ''; el.removeAttribute('data-dnd-over');
+        });
+        card.style.outline = '2px solid #fc8'; card.setAttribute('data-dnd-over', '1');
+      });
+      card.addEventListener('dragleave', e => {
+        if (!card.contains(e.relatedTarget)) {
+          card.style.outline = ''; card.removeAttribute('data-dnd-over');
+        }
+      });
+      card.addEventListener('drop', e => {
+        e.preventDefault();
+        if (dragSrcIdx < 0 || dragSrcIdx === i) return;
+        const [moved] = events.splice(dragSrcIdx, 1);
+        events.splice(i, 0, moved);
+        dragSrcIdx = -1;
+        renderEventsList();
+      });
 
       // Card header
       const hdr = document.createElement('div'); hdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+      const dragHandle = document.createElement('span');
+      dragHandle.textContent = '⠿'; dragHandle.title = 'Drag to reorder';
+      dragHandle.style.cssText = 'cursor:grab;color:#555;font-size:14px;user-select:none;flex-shrink:0;line-height:1;';
+      dragHandle.addEventListener('mousedown', () => { dragHandle.style.cursor = 'grabbing'; });
+      dragHandle.addEventListener('mouseup',   () => { dragHandle.style.cursor = 'grab'; });
       const typeLbl = document.createElement('span'); typeLbl.style.cssText = 'flex:1;color:#fc8;font-size:11px;font-weight:bold;';
-      typeLbl.textContent = { dialog:'💬 Dialog', cameraPan:'📷 Camera Pan', tileChange:'🔲 Tile Change' }[evt.type] || evt.type;
+      typeLbl.textContent = { dialog:'💬 Dialog', cameraPan:'📷 Camera Pan', tileChange:'🔲 Tile Change', setTimeOfDay:'🕐 Set Time of Day', transitionToMap:'🚪 Transition to Map' }[evt.type] || evt.type;
       const delBtn = document.createElement('button'); delBtn.className='tbtn danger'; delBtn.textContent='✕'; delBtn.style.cssText='padding:1px 5px;font-size:10px;';
       delBtn.onclick = () => { events.splice(i, 1); renderEventsList(); };
-      hdr.append(typeLbl, delBtn);
+      hdr.append(dragHandle, typeLbl, delBtn);
       card.appendChild(hdr);
 
       if (evt.type === 'dialog') {
         // ── Dialog ─────────────────────────────────────────
+        // Optional NPC speaker picker
+        const speakerRow = document.createElement('div'); speakerRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+        const speakerLbl = document.createElement('span'); speakerLbl.textContent = 'Speaker:'; speakerLbl.style.cssText = 'color:#888;font-size:10px;min-width:52px;';
+        const speakerSel = document.createElement('select'); speakerSel.style.cssText = 'flex:1;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:2px 4px;font-family:inherit;font-size:11px;';
+        const noneOpt = document.createElement('option'); noneOpt.value = ''; noneOpt.textContent = '— none —'; speakerSel.appendChild(noneOpt);
+        (cur.npcs || []).forEach(n => {
+          const opt = document.createElement('option'); opt.value = n.id; opt.textContent = n.name || 'Unnamed NPC'; speakerSel.appendChild(opt);
+        });
+        speakerSel.value = evt.npcId ?? '';
+        speakerSel.addEventListener('change', () => {
+          const sel = cur.npcs?.find(n => n.id === speakerSel.value);
+          evt.npcId   = sel ? sel.id   : undefined;
+          evt.npcName = sel ? sel.name : undefined;
+        });
+        speakerRow.append(speakerLbl, speakerSel);
+        card.appendChild(speakerRow);
+
         const ta = document.createElement('textarea');
         ta.style.cssText = 'background:#111;color:#fc8;border:1px solid #2a2a2a;font-family:inherit;font-size:11px;padding:6px;resize:vertical;min-height:70px;width:100%;box-sizing:border-box;';
         ta.placeholder = 'One line per [E] press…';
@@ -2108,7 +2593,7 @@ function openTriggerModal(row, col) {
 
       } else if (evt.type === 'cameraPan') {
         // ── Camera Pan ─────────────────────────────────────
-        const body = document.createElement('div'); body.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
+        const body = document.createElement('div'); body.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
         function numInp(label, val, min, max, step, onChange) {
           const w = document.createElement('div'); w.style.cssText = 'display:flex;align-items:center;gap:3px;';
           const l = document.createElement('span'); l.textContent = label; l.style.cssText = 'color:#888;font-size:10px;';
@@ -2117,15 +2602,51 @@ function openTriggerModal(row, col) {
           inp.addEventListener('input', () => onChange(parseFloat(inp.value)));
           w.append(l, inp); return w;
         }
-        body.appendChild(numInp('Row',      evt.row      ?? row, 0, MAP_ROWS-1, 1,   v => evt.row      = Math.round(v) || 0));
-        body.appendChild(numInp('Col',      evt.col      ?? col, 0, MAP_COLS-1, 1,   v => evt.col      = Math.round(v) || 0));
-        body.appendChild(numInp('Duration', evt.duration ?? 2.0, 0.1, 10, 0.1,      v => evt.duration = v || 0.1));
+
+        // From row/col (only meaningful for mapload — shown always but labelled clearly)
+        const isMapLoad = (existing?.activation ?? actSel.value) === 'mapload';
+        if (isMapLoad) {
+          const fromLbl = document.createElement('div');
+          fromLbl.style.cssText = 'color:#555;font-size:10px;';
+          fromLbl.textContent = 'Start position (leave blank to start from current camera):';
+          body.appendChild(fromLbl);
+
+          const fromRow2 = document.createElement('div'); fromRow2.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
+
+          // "blank" inputs: empty string means undefined (use current cam)
+          function optNumInp(label, val, min, max, onChange) {
+            const w = document.createElement('div'); w.style.cssText = 'display:flex;align-items:center;gap:3px;';
+            const l = document.createElement('span'); l.textContent = label; l.style.cssText = 'color:#888;font-size:10px;';
+            const inp = document.createElement('input'); inp.type='number'; inp.min=min; inp.max=max; inp.placeholder='—';
+            inp.value = val != null ? val : '';
+            inp.style.cssText = 'width:54px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:2px 4px;font-family:inherit;font-size:11px;';
+            inp.addEventListener('input', () => {
+              const v = inp.value.trim();
+              onChange(v === '' ? undefined : Math.round(parseFloat(v)));
+            });
+            w.append(l, inp); return w;
+          }
+          fromRow2.appendChild(optNumInp('From Row', evt.fromRow, 0, MAP_ROWS-1, v => evt.fromRow = v));
+          fromRow2.appendChild(optNumInp('From Col', evt.fromCol, 0, MAP_COLS-1, v => evt.fromCol = v));
+          body.appendChild(fromRow2);
+
+          const toLbl = document.createElement('div');
+          toLbl.style.cssText = 'color:#555;font-size:10px;';
+          toLbl.textContent = 'End position (where camera pans to):';
+          body.appendChild(toLbl);
+        }
+
+        const toRow2 = document.createElement('div'); toRow2.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
+        toRow2.appendChild(numInp('Row',      evt.row      ?? row, 0, MAP_ROWS-1, 1,  v => evt.row      = Math.round(v) || 0));
+        toRow2.appendChild(numInp('Col',      evt.col      ?? col, 0, MAP_COLS-1, 1,  v => evt.col      = Math.round(v) || 0));
+        toRow2.appendChild(numInp('Duration', evt.duration ?? 2.0, 0.1, 10, 0.1,     v => evt.duration = v || 0.1));
         const retW = document.createElement('div'); retW.style.cssText = 'display:flex;align-items:center;gap:3px;';
         const retChk = document.createElement('input'); retChk.type='checkbox'; retChk.checked = evt.return ?? true; retChk.style.accentColor='#fc8';
         retChk.addEventListener('change', () => evt.return = retChk.checked);
         const retL = document.createElement('span'); retL.textContent = 'Return'; retL.style.cssText = 'color:#888;font-size:10px;';
         retW.append(retChk, retL);
-        body.appendChild(retW);
+        toRow2.appendChild(retW);
+        body.appendChild(toRow2);
         card.appendChild(body);
 
       } else if (evt.type === 'tileChange') {
@@ -2161,6 +2682,79 @@ function openTriggerModal(row, col) {
         }
         renderChanges();
         card.appendChild(changesWrap);
+
+      } else if (evt.type === 'setTimeOfDay') {
+        // ── Set Time of Day ────────────────────────────────
+        if (evt.gameMinutes == null) evt.gameMinutes = 360;
+        const todBody = document.createElement('div'); todBody.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
+        function todNumInp(label, val, min, max, onChange) {
+          const w = document.createElement('div'); w.style.cssText = 'display:flex;align-items:center;gap:3px;';
+          const l = document.createElement('span'); l.textContent = label; l.style.cssText = 'color:#888;font-size:10px;';
+          const inp = document.createElement('input'); inp.type='number'; inp.min=min; inp.max=max; inp.value=val;
+          inp.style.cssText = 'width:46px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:2px 4px;font-family:inherit;font-size:11px;';
+          inp.addEventListener('input', () => { onChange(parseInt(inp.value)||0); previewLbl.textContent = fmtTOD(); });
+          w.append(l, inp); return { w, inp };
+        }
+        function fmtTOD() {
+          const h = Math.floor(evt.gameMinutes / 60) % 24;
+          const m = evt.gameMinutes % 60;
+          return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+        }
+        const hourObj = todNumInp('Hour',   Math.floor(evt.gameMinutes/60)%24, 0, 23, v => {
+          const cur = evt.gameMinutes % 60;
+          evt.gameMinutes = Math.max(0,Math.min(v,23))*60 + cur;
+          hourObj.inp.value = Math.floor(evt.gameMinutes/60)%24;
+        });
+        const minObj  = todNumInp('Min',    evt.gameMinutes%60,                0, 59, v => {
+          const curH = Math.floor(evt.gameMinutes/60)%24;
+          evt.gameMinutes = curH*60 + Math.max(0,Math.min(v,59));
+          minObj.inp.value = evt.gameMinutes%60;
+        });
+        const previewLbl = document.createElement('span');
+        previewLbl.style.cssText = 'color:#aaa;font-size:11px;min-width:36px;';
+        previewLbl.textContent = fmtTOD();
+        todBody.append(hourObj.w, minObj.w, previewLbl);
+        card.appendChild(todBody);
+
+      } else if (evt.type === 'transitionToMap') {
+        // ── Transition to Map ──────────────────────────────
+        const ttmBody = document.createElement('div'); ttmBody.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+
+        // Map selector
+        const mapRow = document.createElement('div'); mapRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        const mapLbl = document.createElement('span'); mapLbl.textContent = 'Map'; mapLbl.style.cssText = 'color:#888;font-size:10px;min-width:26px;';
+        const mapSel = document.createElement('select');
+        mapSel.style.cssText = 'flex:1;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:2px 4px;font-family:inherit;font-size:11px;';
+        const blankOpt = document.createElement('option'); blankOpt.value = ''; blankOpt.textContent = '— select map —'; mapSel.appendChild(blankOpt);
+        worldMaps.forEach(m => {
+          const o = document.createElement('option'); o.value = m.id; o.textContent = m.name || m.id;
+          if (m.id === evt.toMapId) o.selected = true;
+          mapSel.appendChild(o);
+        });
+        mapSel.addEventListener('change', () => { evt.toMapId = mapSel.value; });
+        mapRow.append(mapLbl, mapSel);
+
+        // Spawn row/col
+        const spawnRow = document.createElement('div'); spawnRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+        const spawnLbl = document.createElement('span'); spawnLbl.textContent = 'Spawn at'; spawnLbl.style.cssText = 'color:#888;font-size:10px;';
+        function ttmNumInp(label, val, max, onChange) {
+          const w = document.createElement('div'); w.style.cssText = 'display:flex;align-items:center;gap:3px;';
+          const l = document.createElement('span'); l.textContent = label; l.style.cssText = 'color:#888;font-size:10px;';
+          const inp = document.createElement('input'); inp.type='number'; inp.min=0; inp.max=max; inp.value=val;
+          inp.style.cssText = 'width:46px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:2px 4px;font-family:inherit;font-size:11px;';
+          inp.addEventListener('input', () => onChange(Math.max(0, parseInt(inp.value)||0)));
+          w.append(l, inp); return w;
+        }
+        const noteSpan = document.createElement('span'); noteSpan.textContent = '(blank = map spawn)'; noteSpan.style.cssText = 'color:#555;font-size:9px;';
+        spawnRow.append(
+          spawnLbl,
+          ttmNumInp('Row', evt.toRow ?? 0, MAP_ROWS-1, v => evt.toRow = v),
+          ttmNumInp('Col', evt.toCol ?? 0, MAP_COLS-1, v => evt.toCol = v),
+          noteSpan,
+        );
+
+        ttmBody.append(mapRow, spawnRow);
+        card.appendChild(ttmBody);
       }
 
       eventsList.appendChild(card);
@@ -2168,13 +2762,15 @@ function openTriggerModal(row, col) {
 
     // Add-event buttons
     const addRow = document.createElement('div'); addRow.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
-    [['dialog','💬 Dialog'],['cameraPan','📷 Camera Pan'],['tileChange','🔲 Tile Change']].forEach(([type, label]) => {
+    [['dialog','💬 Dialog'],['cameraPan','📷 Camera Pan'],['tileChange','🔲 Tile Change'],['setTimeOfDay','🕐 Set Time'],['transitionToMap','🚪 Transition to Map']].forEach(([type, label]) => {
       const btn = document.createElement('button'); btn.className='tbtn import-btn'; btn.style.fontSize='10px'; btn.textContent='+ ' + label;
       btn.onclick = () => {
         const defaults = {
-          dialog:     { type:'dialog',     lines:[] },
-          cameraPan:  { type:'cameraPan',  row, col, duration:2.0, return:true },
-          tileChange: { type:'tileChange', changes:[] },
+          dialog:          { type:'dialog',          lines:[] },
+          cameraPan:       { type:'cameraPan',       row, col, duration:2.0, return:true },
+          tileChange:      { type:'tileChange',      changes:[] },
+          setTimeOfDay:    { type:'setTimeOfDay',    gameMinutes:360 },
+          transitionToMap: { type:'transitionToMap', toMapId:'', toRow:0, toCol:0 },
         };
         events.push(defaults[type]);
         renderEventsList();
@@ -2490,6 +3086,54 @@ function resizeMapCanvas() {
   renderMap();
 }
 
+// ── Waypoint preview overlay ───────────────────────────────
+function renderWaypointPreview() {
+  if (!npcWaypointPickMode) return;
+  const { npcRow, npcCol, points } = npcWaypointPickMode;
+  const ts = tileSize();
+  const ctx = mapCtx;
+
+  // Full path: NPC anchor → wp1 → wp2 → … → back to anchor
+  const all = [{ row: npcRow, col: npcCol }, ...points];
+
+  // Helper: tile centre in screen coords
+  const sx = p => Math.round((p.col + 0.5) * ts - camX);
+  const sy = p => Math.round((p.row + 0.5) * ts - camY);
+
+  // Route lines (dashed cyan)
+  if (all.length >= 2) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(80,220,255,0.75)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    all.forEach((p, i) => { i === 0 ? ctx.moveTo(sx(p), sy(p)) : ctx.lineTo(sx(p), sy(p)); });
+    // loop back
+    ctx.lineTo(sx(all[0]), sy(all[0]));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // Dots + index labels
+  all.forEach((p, i) => {
+    const x = sx(p), y = sy(p);
+    const isAnchor = i === 0;
+    ctx.beginPath();
+    ctx.arc(x, y, isAnchor ? 6 : 5, 0, Math.PI * 2);
+    ctx.fillStyle = isAnchor ? '#ffcc44' : '#44ccff';
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#000';
+    ctx.font = `bold ${isAnchor ? 9 : 8}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(isAnchor ? 'N' : i, x, y);
+  });
+}
+
 // ── Map render ─────────────────────────────────────────────
 function tileSize() { return 16 * zoom; }
 
@@ -2551,19 +3195,22 @@ function renderMap() {
   renderNpcOverlays();
   renderTriggerOverlays();
   renderItemOverlays();
+  renderWaypointPreview();
 
   // Hover highlight
   if (hoverCell.r >= 0 && hoverCell.c >= 0 &&
       hoverCell.r < MAP_ROWS && hoverCell.c < MAP_COLS) {
     const hx = Math.round(hoverCell.c * ts - camX);
     const hy = Math.round(hoverCell.r * ts - camY);
-    const hoverColor = tool === 'erase'  ? 'rgba(255,80,80,0.75)'
+    const hoverColor = altEyedropper       ? 'rgba(255,200,50,0.9)'
+                     : tool === 'erase'  ? 'rgba(255,80,80,0.75)'
                      : tool === 'exit'   ? 'rgba(50,220,100,0.85)'
                      : tool === 'spawn'  ? 'rgba(255,215,60,0.9)'
                      : 'rgba(255,255,255,0.55)';
     mapCtx.strokeStyle = hoverColor;
     mapCtx.lineWidth = 1.5;
-    mapCtx.strokeRect(hx+0.5, hy+0.5, ts-1, ts-1);
+    const sz = tool === 'erase' ? eraserSize : 1;
+    mapCtx.strokeRect(hx+0.5, hy+0.5, ts*sz-1, ts*sz-1);
   }
 
   // Minimap
@@ -2605,28 +3252,50 @@ function paint(r, c) {
   lastCell = { r, c };
 
   if (tool === 'erase') {
-    // Erase clears BOTH base and overlay layers at this cell
+    // Erase clears BOTH base and overlay layers over an eraserSize×eraserSize block
     const ops = [];
-    const baseOld = tileMap[r][c];
-    const ovOld   = overlayMap[r]?.[c] ?? -1;
-    if (baseOld !== -1) ops.push({ r, c, old: baseOld, nw: -1, layer: 'base' });
-    if (ovOld   !== -1) ops.push({ r, c, old: ovOld,   nw: -1, layer: 'overlay' });
-    if (ops.length) {
-      pushUndo(ops);
-      tileMap[r][c] = -1;
-      if (overlayMap[r]) overlayMap[r][c] = -1;
+    for (let dr = 0; dr < eraserSize; dr++) {
+      for (let dc = 0; dc < eraserSize; dc++) {
+        const er = r + dr, ec = c + dc;
+        if (er < 0 || er >= MAP_ROWS || ec < 0 || ec >= MAP_COLS) continue;
+        const baseOld = tileMap[er][ec];
+        const ovOld   = overlayMap[er]?.[ec] ?? -1;
+        if (baseOld !== -1) ops.push({ r: er, c: ec, old: baseOld, nw: -1, layer: 'base' });
+        if (ovOld   !== -1) ops.push({ r: er, c: ec, old: ovOld,   nw: -1, layer: 'overlay' });
+        tileMap[er][ec] = -1;
+        if (overlayMap[er]) overlayMap[er][ec] = -1;
+      }
     }
-    // Also remove any entities on this cell
+    if (ops.length) pushUndo(ops);
+    // Also remove any entities within the erased block
     const cur = worldMaps.find(m => m.id === currentMapId);
     if (cur) {
       const prevN = cur.npcs?.length ?? 0;
       const prevE = cur.exits?.length ?? 0;
       const prevT = cur.triggers?.length ?? 0;
       const prevI = cur.items?.length ?? 0;
-      cur.npcs     = (cur.npcs     || []).filter(n => !(+n.row === r && +n.col === c));
-      cur.exits    = (cur.exits    || []).filter(e => !(e.fromRow === r && e.fromCol === c));
-      cur.triggers = (cur.triggers || []).filter(t => !(+t.row === r && +t.col === c));
-      cur.items    = (cur.items    || []).filter(it => !(+it.row === r && +it.col === c));
+      cur.npcs     = (cur.npcs     || []).filter(n  => !(+n.row  >= r && +n.row  < r+eraserSize && +n.col  >= c && +n.col  < c+eraserSize));
+      cur.exits    = (cur.exits    || []).filter(e  => !(e.fromRow >= r && e.fromRow < r+eraserSize && e.fromCol >= c && e.fromCol < c+eraserSize));
+      cur.triggers = (cur.triggers || []).filter(t  => !(+t.row  >= r && +t.row  < r+eraserSize && +t.col  >= c && +t.col  < c+eraserSize));
+
+      // Items: collect removed items first so we can push them to undo
+      const removedItems = (cur.items || []).filter(it =>
+        +it.row >= r && +it.row < r+eraserSize && +it.col >= c && +it.col < c+eraserSize
+      );
+      if (removedItems.length) {
+        cur.items = (cur.items || []).filter(it => !removedItems.includes(it));
+        // Add item removals to the undo stack so Ctrl+Z restores them
+        pushUndo(removedItems.map(it => ({ type: 'entity', entity: 'item', action: 'remove', data: { ...it } })));
+        const names = [...new Set(removedItems.map(it => it.name))].join(', ');
+        toast(`Item removed: ${names}`);
+      }
+
+      // Also erase spawn if it falls inside the block
+      if (cur.spawn && +cur.spawn.row >= r && +cur.spawn.row < r+eraserSize &&
+                       +cur.spawn.col >= c && +cur.spawn.col < c+eraserSize) {
+        cur.spawn = null;
+        toast('Spawn point removed');
+      }
       if (prevN !== cur.npcs.length || prevE !== cur.exits.length || prevT !== cur.triggers.length || prevI !== (cur.items?.length ?? 0))
         renderMapsList();
     }
@@ -2683,17 +3352,40 @@ function pushUndo(ops) {
   if (undoStack.length > 200) undoStack.shift();
   redoStack = [];
 }
+function applyOp(o, reverse) {
+  if (o.type === 'entity') {
+    // Entity undo/redo (currently: item removal)
+    const cur = worldMaps.find(m => m.id === currentMapId);
+    if (!cur) return;
+    if (o.entity === 'item') {
+      if ((o.action === 'remove') === reverse) {
+        // Undo a removal → re-add the item
+        if (!cur.items) cur.items = [];
+        if (!cur.items.find(it => it.id === o.data.id)) cur.items.push({ ...o.data });
+      } else {
+        // Redo a removal → re-remove the item
+        cur.items = (cur.items || []).filter(it => it.id !== o.data.id);
+      }
+    }
+    renderMapsList();
+  } else {
+    // Tile op
+    const val = reverse ? o.old : o.nw;
+    (o.layer === 'overlay' ? overlayMap : tileMap)[o.r][o.c] = val;
+  }
+}
+
 function undo() {
   if (!undoStack.length) return;
   const ops = undoStack.pop();
-  for (const o of ops) (o.layer === 'overlay' ? overlayMap : tileMap)[o.r][o.c] = o.old;
+  for (const o of ops) applyOp(o, true);
   redoStack.push(ops);
   markMinimapDirty(); renderMap();
 }
 function redo() {
   if (!redoStack.length) return;
   const ops = redoStack.pop();
-  for (const o of ops) (o.layer === 'overlay' ? overlayMap : tileMap)[o.r][o.c] = o.nw;
+  for (const o of ops) applyOp(o, false);
   undoStack.push(ops);
   markMinimapDirty(); renderMap();
 }
@@ -2711,9 +3403,14 @@ function initMap(fill = -1) {
 // ── Tool / zoom ────────────────────────────────────────────
 function setTool(t) {
   tool = t;
+  // Leaving paint tool clears the Alt eyedropper override
+  if (t !== 'paint') altEyedropper = false;
   ['paint','erase','fill','pick','select','exit','spawn','npc','item','trigger'].forEach(n =>
     document.getElementById('btn-'+n)?.classList.toggle('active', n === t)
   );
+  // Show eraser size buttons only when eraser is active
+  const szGroup = document.getElementById('eraser-size-group');
+  if (szGroup) szGroup.style.display = t === 'erase' ? 'flex' : 'none';
   mapCanvas.style.cursor = t === 'fill'   ? 'cell'
                          : t === 'pick'   ? 'zoom-in'
                          : t === 'select' ? 'default'
@@ -2800,6 +3497,7 @@ function openNpcTemplateModal(tmplId = null) {
   }
   tileIdInpT.addEventListener('input', refreshTilePrev);
   refreshTilePrev();
+  wirePickerToPreview(tilePrevT, () => parseInt(tileIdInpT.value), id => { tileIdInpT.value = id; curTileId = id; refreshTilePrev(); });
   tileRowT.append(tileLblT, tilePrevT, tileIdInpT, useSelBtnT, typeNoteT);
 
   // ── Portrait upload ───────────────────────────────────────
@@ -2861,7 +3559,7 @@ function openNpcTemplateModal(tmplId = null) {
     const delBtnT = makeBtn('Delete Template', '#3a1515', '#7a2525', () => {
       const idx = npcTemplates.findIndex(t => t.id === tmplId);
       if (idx >= 0) npcTemplates.splice(idx, 1);
-      ov.remove(); renderAssetsPanel(); toast(`Template "${existing.displayName}" deleted`);
+      ov.remove(); renderNpcsPanel(); toast(`Template "${existing.displayName}" deleted`);
     });
     delBtnT.style.marginRight = 'auto';
     btnsT.appendChild(delBtnT);
@@ -2879,7 +3577,7 @@ function openNpcTemplateModal(tmplId = null) {
       } else {
         npcTemplates.push({ id: 'tmpl_' + genMapId(), displayName, tileId: tileId2, portrait: curPortrait });
       }
-      ov.remove(); renderAssetsPanel();
+      ov.remove(); renderNpcsPanel();
       toast(existing ? `Template "${displayName}" saved` : `Template "${displayName}" created`);
     })
   );
@@ -2890,7 +3588,439 @@ function openNpcTemplateModal(tmplId = null) {
   nameInp.focus(); nameInp.select();
 }
 
+// ── Item Template Modal ─────────────────────────────────────
+function openItemTemplateModal(tmplId = null) {
+  const existing = tmplId ? itemTemplates.find(t => t.id === tmplId) : null;
+
+  const ov  = document.createElement('div'); ov.className = 'overlay';
+  const box = document.createElement('div'); box.className = 'modal';
+  box.style.minWidth = '420px';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = existing ? `Edit Item Template: ${existing.name}` : 'New Item Template';
+  h3.style.color = '#ffcc44';
+
+  // ── Name ────────────────────────────────────────────────
+  const nameRow = document.createElement('div');
+  nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const nameLbl = document.createElement('label');
+  nameLbl.textContent = 'Name:'; nameLbl.style.cssText = 'color:#888;min-width:96px;';
+  const nameInp = document.createElement('input');
+  nameInp.type = 'text'; nameInp.value = existing?.name ?? '';
+  nameInp.placeholder = 'Health Potion, Iron Key, Gold Coin…';
+  nameInp.style.cssText = 'flex:1;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+  nameRow.append(nameLbl, nameInp);
+
+  // ── Description ─────────────────────────────────────────
+  const descLblT = document.createElement('div');
+  descLblT.style.cssText = 'color:#888;font-size:10px;margin-top:4px;';
+  descLblT.textContent = 'Description (shown in inventory tooltip):';
+  const descInpT = document.createElement('input');
+  descInpT.type = 'text'; descInpT.value = existing?.description ?? '';
+  descInpT.placeholder = 'Restores 30 HP when used.';
+  descInpT.style.cssText = 'background:#111;color:#fc8;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;width:100%;box-sizing:border-box;';
+
+  // ── Tile ID ─────────────────────────────────────────────
+  let curTileIdIT = existing?.tileId ?? selTile;
+  const tileRowT2 = document.createElement('div');
+  tileRowT2.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const tileLblT2 = document.createElement('label');
+  tileLblT2.textContent = 'Tile ID:'; tileLblT2.style.cssText = 'color:#888;min-width:96px;';
+  const tilePrevT2 = document.createElement('canvas');
+  tilePrevT2.width = 32; tilePrevT2.height = 32;
+  tilePrevT2.style.cssText = 'border:1px solid #444;image-rendering:pixelated;background:#161412;width:32px;height:32px;flex-shrink:0;';
+  const tileIdInpT2 = document.createElement('input');
+  tileIdInpT2.type = 'number'; tileIdInpT2.min = '-1'; tileIdInpT2.max = '9999';
+  tileIdInpT2.value = curTileIdIT;
+  tileIdInpT2.style.cssText = 'width:60px;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+  const useSelBtnT2 = document.createElement('button');
+  useSelBtnT2.className = 'tbtn'; useSelBtnT2.textContent = 'Use selected'; useSelBtnT2.style.fontSize = '10px';
+  useSelBtnT2.onclick = () => { tileIdInpT2.value = selTile; refreshTPrev(); };
+  function refreshTPrev() {
+    curTileIdIT = parseInt(tileIdInpT2.value) || -1;
+    const pc = tilePrevT2.getContext('2d'); pc.clearRect(0,0,32,32);
+    if (curTileIdIT >= 0) {
+      pc.fillStyle = tintTable[curTileIdIT] || DEFAULT_TINT; pc.fillRect(0,0,32,32);
+      const baseId = tileBaseMap.has(curTileIdIT) ? tileBaseMap.get(curTileIdIT) : (curTileIdIT < TOTAL_TILES ? curTileIdIT : -1);
+      if (baseId >= 0) {
+        const img = tileImgs[baseId];
+        if (img?.complete && img.naturalWidth > 0) {
+          pc.save(); pc.globalCompositeOperation='multiply'; pc.imageSmoothingEnabled=false;
+          pc.drawImage(img,0,0,16,16,0,0,32,32); pc.restore();
+        }
+      }
+    }
+  }
+  tileIdInpT2.addEventListener('input', refreshTPrev); refreshTPrev();
+  wirePickerToPreview(tilePrevT2, () => parseInt(tileIdInpT2.value), id => { tileIdInpT2.value = id; curTileIdIT = id; refreshTPrev(); });
+  tileRowT2.append(tileLblT2, tilePrevT2, tileIdInpT2, useSelBtnT2);
+
+  // ── Pickup mode ─────────────────────────────────────────
+  const pickRowT = document.createElement('div');
+  pickRowT.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:2px;';
+  const pickLblT = document.createElement('label');
+  pickLblT.textContent = 'Pickup:'; pickLblT.style.cssText = 'color:#888;min-width:96px;';
+  const pickSelT = document.createElement('select'); pickSelT.className = 'type-sel';
+  [['interact','[E] Interact'],['auto','🚶 Auto (walk over)']].forEach(([v,l]) => {
+    const o = document.createElement('option'); o.value = v; o.textContent = l;
+    if ((existing?.pickup ?? 'interact') === v) o.selected = true;
+    pickSelT.appendChild(o);
+  });
+  pickRowT.append(pickLblT, pickSelT);
+
+  // ── Buttons ─────────────────────────────────────────────
+  const btnsT2 = document.createElement('div'); btnsT2.className = 'modal-btns';
+  if (existing) {
+    const delBtn = makeBtn('Delete Template', '#3a1515', '#7a2525', () => {
+      const idx = itemTemplates.findIndex(t => t.id === tmplId);
+      if (idx >= 0) itemTemplates.splice(idx, 1);
+      ov.remove(); renderItemsPanel(); toast(`Item template "${existing.name}" deleted`);
+    });
+    delBtn.style.marginRight = 'auto';
+    btnsT2.appendChild(delBtn);
+  }
+  btnsT2.append(
+    makeBtn('Cancel', '#2a2a2a', '#444', () => ov.remove()),
+    makeBtn(existing ? 'Save' : 'Create Template', '#2a2800', '#888800', () => {
+      const name = nameInp.value.trim();
+      if (!name) { toast('Name required'); nameInp.focus(); return; }
+      const tileId      = parseInt(tileIdInpT2.value) || -1;
+      const description = descInpT.value.trim();
+      const pickup      = pickSelT.value;
+      if (existing) {
+        Object.assign(existing, { name, tileId, description, pickup });
+      } else {
+        itemTemplates.push({ id: 'itmpl_' + genMapId(), name, tileId, description, pickup });
+      }
+      ov.remove(); renderItemsPanel();
+      toast(existing ? `Template "${name}" saved` : `Template "${name}" created`);
+    })
+  );
+
+  box.append(h3, nameRow, descLblT, descInpT, tileRowT2, pickRowT, btnsT2);
+  ov.appendChild(box); document.body.appendChild(ov);
+  ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
+  nameInp.focus(); nameInp.select();
+}
+
+// ── Recipe Modal ──────────────────────────────────────────
+function openRecipeModal(recipeId = null) {
+  const existing = recipeId ? recipes.find(r => r.id === recipeId) : null;
+  if (!itemTemplates.length) { toast('Create at least one item template first'); return; }
+
+  const ov  = document.createElement('div'); ov.className = 'overlay';
+  const box = document.createElement('div'); box.className = 'modal';
+  box.style.minWidth = '440px';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = existing ? 'Edit Recipe' : 'New Recipe';
+  h3.style.color = '#88ddaa';
+
+  // Working copies
+  let inputs      = existing ? existing.inputs.map(i => ({...i})) : [{ templateId:'', count:1 }, { templateId:'', count:1 }];
+  let outputState = existing ? {...existing.output} : { templateId:'', count:1 };
+
+  // ── Build template <select> ───────────────────────────────
+  function fillTemplateSel(sel, selectedId) {
+    sel.innerHTML = '';
+    const none = document.createElement('option'); none.value = ''; none.textContent = '— select item —';
+    sel.appendChild(none);
+    itemTemplates.forEach(t => {
+      const o = document.createElement('option'); o.value = t.id; o.textContent = t.name;
+      if (t.id === selectedId) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+
+  // ── Ingredient rows ───────────────────────────────────────
+  const ingHdr = document.createElement('div');
+  ingHdr.style.cssText = 'color:#888;font-size:10px;margin-top:4px;';
+  ingHdr.textContent = 'Ingredients (2 or more):';
+
+  const ingList = document.createElement('div');
+  ingList.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+
+  function addIngRow(ing) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+
+    const sel = document.createElement('select'); sel.className = 'type-sel'; sel.style.flex = '1';
+    fillTemplateSel(sel, ing.templateId);
+    sel.addEventListener('change', () => { ing.templateId = sel.value; });
+
+    const xLbl = document.createElement('span'); xLbl.textContent = '×'; xLbl.style.color = '#555';
+    const countInp = document.createElement('input');
+    countInp.type='number'; countInp.min='1'; countInp.max='99'; countInp.value=ing.count;
+    countInp.style.cssText='width:46px;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:3px 5px;font-family:inherit;font-size:11px;';
+    countInp.addEventListener('change', () => { ing.count = Math.max(1, parseInt(countInp.value)||1); countInp.value = ing.count; });
+
+    const remBtn = document.createElement('button'); remBtn.className='tbtn mibtn danger'; remBtn.textContent='✕';
+    remBtn.onclick = () => { inputs.splice(inputs.indexOf(ing), 1); row.remove(); };
+
+    row.append(sel, xLbl, countInp, remBtn);
+    ingList.appendChild(row);
+  }
+  inputs.forEach(ing => addIngRow(ing));
+
+  const addIngBtn = document.createElement('button');
+  addIngBtn.className = 'tbtn import-btn'; addIngBtn.textContent = '+ Add Ingredient';
+  addIngBtn.style.cssText = 'margin-top:4px;font-size:10px;';
+  addIngBtn.onclick = () => { const ng = { templateId:'', count:1 }; inputs.push(ng); addIngRow(ng); };
+
+  // ── Output row ────────────────────────────────────────────
+  const outHdr = document.createElement('div');
+  outHdr.style.cssText = 'color:#888;font-size:10px;margin-top:8px;border-top:1px solid #222;padding-top:8px;';
+  outHdr.textContent = 'Result:';
+
+  const outRow = document.createElement('div');
+  outRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  const outSel = document.createElement('select'); outSel.className='type-sel'; outSel.style.flex='1';
+  fillTemplateSel(outSel, outputState.templateId);
+  outSel.addEventListener('change', () => { outputState.templateId = outSel.value; });
+  const outX = document.createElement('span'); outX.textContent='×'; outX.style.color='#555';
+  const outCount = document.createElement('input');
+  outCount.type='number'; outCount.min='1'; outCount.max='99'; outCount.value=outputState.count;
+  outCount.style.cssText='width:46px;background:#111;color:#fc8;border:1px solid #2a2a2a;padding:3px 5px;font-family:inherit;font-size:11px;';
+  outCount.addEventListener('change', () => { outputState.count = Math.max(1,parseInt(outCount.value)||1); outCount.value = outputState.count; });
+  outRow.append(outSel, outX, outCount);
+
+  // ── Buttons ───────────────────────────────────────────────
+  const btns = document.createElement('div'); btns.className = 'modal-btns';
+  if (existing) {
+    const delBtn = makeBtn('Delete Recipe','#3a1515','#7a2525', () => {
+      recipes.splice(recipes.findIndex(r=>r.id===recipeId), 1);
+      ov.remove(); renderItemsPanel(); toast('Recipe deleted');
+    });
+    delBtn.style.marginRight='auto'; btns.appendChild(delBtn);
+  }
+  btns.append(
+    makeBtn('Cancel','#2a2a2a','#444',() => ov.remove()),
+    makeBtn(existing?'Save':'Create Recipe','#1a3a20','#336630', () => {
+      const validInputs = inputs.filter(i => i.templateId);
+      if (validInputs.length < 2) { toast('Add at least 2 ingredients'); return; }
+      if (!outputState.templateId) { toast('Select a result item'); return; }
+      if (existing) {
+        Object.assign(existing, { inputs: validInputs, output: { ...outputState } });
+      } else {
+        recipes.push({ id:'recipe_'+genMapId(), inputs: validInputs, output: { ...outputState } });
+      }
+      ov.remove(); renderItemsPanel();
+      toast(existing ? 'Recipe saved' : 'Recipe created');
+    })
+  );
+
+  box.append(h3, ingHdr, ingList, addIngBtn, outHdr, outRow, btns);
+  ov.appendChild(box); document.body.appendChild(ov);
+  ov.addEventListener('mousedown', e => { if (e.target===ov) ov.remove(); });
+}
+
 // ── Tab ────────────────────────────────────────────────────
+
+// ── NPCs Panel ────────────────────────────────────────────
+function renderNpcsPanel() {
+  const panel = document.getElementById('npcs-panel');
+  panel.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+  const title = document.createElement('span');
+  title.style.cssText = 'flex:1;color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;';
+  title.textContent = 'NPC Templates';
+  const newBtn = document.createElement('button');
+  newBtn.className = 'tbtn import-btn'; newBtn.textContent = '+ New NPC';
+  newBtn.style.fontSize = '10px';
+  newBtn.onclick = () => { openNpcTemplateModal(null); };
+  hdr.append(title, newBtn);
+  panel.appendChild(hdr);
+
+  if (npcTemplates.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'color:#3a3a3a;font-size:10px;text-align:center;padding:14px 8px;line-height:1.7;';
+    empty.textContent = 'No NPC templates yet.\nCreate one to pre-configure NPCs with a tile and portrait.';
+    panel.appendChild(empty);
+    return;
+  }
+  npcTemplates.forEach(tmpl => {
+    const trow = document.createElement('div');
+    trow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px;margin-bottom:4px;background:#1e1e1e;border:1px solid #2a2a2a;border-radius:3px;';
+
+    const tpv = document.createElement('canvas'); tpv.width = 24; tpv.height = 24;
+    tpv.style.cssText = 'border:1px solid #333;image-rendering:pixelated;background:#161412;flex-shrink:0;';
+    if (tmpl.tileId >= 0) {
+      const pc = tpv.getContext('2d');
+      pc.fillStyle = tintTable[tmpl.tileId] || DEFAULT_TINT; pc.fillRect(0,0,24,24);
+      const bid = tileBaseMap.has(tmpl.tileId) ? tileBaseMap.get(tmpl.tileId) : (tmpl.tileId < TOTAL_TILES ? tmpl.tileId : -1);
+      if (bid >= 0) {
+        const img = tileImgs[bid];
+        if (img?.complete && img.naturalWidth > 0) {
+          pc.save(); pc.globalCompositeOperation='multiply'; pc.imageSmoothingEnabled=false;
+          pc.drawImage(img,0,0,16,16,0,0,24,24); pc.restore();
+        }
+      }
+    }
+    trow.appendChild(tpv);
+
+    if (tmpl.portrait?.dataUrl) {
+      const pimg = document.createElement('img');
+      pimg.src = tmpl.portrait.dataUrl;
+      pimg.style.cssText = 'width:24px;height:24px;object-fit:cover;border:1px solid #333;image-rendering:pixelated;flex-shrink:0;';
+      trow.appendChild(pimg);
+    }
+
+    const tinfo = document.createElement('div'); tinfo.style.cssText = 'flex:1;min-width:0;';
+    const tname = document.createElement('div');
+    tname.style.cssText = 'color:#3ab8dc;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    tname.textContent = tmpl.displayName;
+    const tsub = document.createElement('div');
+    tsub.style.cssText = 'color:#444;font-size:10px;';
+    tsub.textContent = `Tile #${tmpl.tileId}${tmpl.portrait ? ' • portrait ★' : ''}`;
+    tinfo.append(tname, tsub);
+
+    const editTBtn = document.createElement('button');
+    editTBtn.className = 'tbtn mibtn'; editTBtn.textContent = '✏'; editTBtn.title = 'Edit template';
+    editTBtn.onclick = () => openNpcTemplateModal(tmpl.id);
+
+    trow.append(tinfo, editTBtn);
+    panel.appendChild(trow);
+  });
+}
+
+// ── Items Panel ───────────────────────────────────────────
+function renderItemsPanel() {
+  const panel = document.getElementById('items-panel');
+  panel.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+  const title = document.createElement('span');
+  title.style.cssText = 'flex:1;color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;';
+  title.textContent = 'Item Templates';
+  const newBtn = document.createElement('button');
+  newBtn.className = 'tbtn import-btn'; newBtn.textContent = '+ New Item';
+  newBtn.style.fontSize = '10px';
+  newBtn.onclick = () => { openItemTemplateModal(null); };
+  hdr.append(title, newBtn);
+  panel.appendChild(hdr);
+
+  if (itemTemplates.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'color:#3a3a3a;font-size:10px;text-align:center;padding:14px 8px;line-height:1.7;';
+    empty.textContent = 'No item templates yet.\nCreate one to reuse items across your maps.';
+    panel.appendChild(empty);
+    return;
+  }
+  itemTemplates.forEach(tmpl => {
+    const irow = document.createElement('div');
+    irow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px;margin-bottom:4px;background:#1e1e1e;border:1px solid #2a2a2a;border-radius:3px;';
+
+    const ipv = document.createElement('canvas'); ipv.width = 24; ipv.height = 24;
+    ipv.style.cssText = 'border:1px solid #333;image-rendering:pixelated;background:#161412;flex-shrink:0;';
+    if (tmpl.tileId >= 0) {
+      const pc = ipv.getContext('2d');
+      pc.fillStyle = tintTable[tmpl.tileId] || DEFAULT_TINT; pc.fillRect(0,0,24,24);
+      const bid = tileBaseMap.has(tmpl.tileId) ? tileBaseMap.get(tmpl.tileId) : (tmpl.tileId < TOTAL_TILES ? tmpl.tileId : -1);
+      if (bid >= 0) {
+        const img = tileImgs[bid];
+        if (img?.complete && img.naturalWidth > 0) {
+          pc.save(); pc.globalCompositeOperation='multiply'; pc.imageSmoothingEnabled=false;
+          pc.drawImage(img,0,0,16,16,0,0,24,24); pc.restore();
+        }
+      }
+    }
+    irow.appendChild(ipv);
+
+    const iinfo = document.createElement('div'); iinfo.style.cssText = 'flex:1;min-width:0;';
+    const iname = document.createElement('div');
+    iname.style.cssText = 'color:#ffcc44;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    iname.textContent = tmpl.name;
+    const isub = document.createElement('div');
+    isub.style.cssText = 'color:#444;font-size:10px;';
+    isub.textContent = `Tile #${tmpl.tileId} • ${tmpl.pickup === 'interact' ? '[E]' : 'auto'}${tmpl.description ? ' • ' + tmpl.description.slice(0,28) : ''}`;
+    iinfo.append(iname, isub);
+
+    const editIBtn = document.createElement('button');
+    editIBtn.className = 'tbtn mibtn'; editIBtn.textContent = '✏'; editIBtn.title = 'Edit template';
+    editIBtn.onclick = () => openItemTemplateModal(tmpl.id);
+
+    irow.append(iinfo, editIBtn);
+    panel.appendChild(irow);
+  });
+
+  // ── Recipes section ───────────────────────────────────────
+  const recSep = document.createElement('div');
+  recSep.style.cssText = 'height:1px;background:#2a2a2a;margin:12px 0;';
+  panel.appendChild(recSep);
+
+  const recHdr = document.createElement('div');
+  recHdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+  const recTitle = document.createElement('span');
+  recTitle.style.cssText = 'flex:1;color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;';
+  recTitle.textContent = 'Crafting Recipes';
+  const newRecBtn = document.createElement('button');
+  newRecBtn.className = 'tbtn import-btn'; newRecBtn.textContent = '+ New Recipe';
+  newRecBtn.style.fontSize = '10px';
+  newRecBtn.onclick = () => openRecipeModal(null);
+  recHdr.append(recTitle, newRecBtn);
+  panel.appendChild(recHdr);
+
+  if (recipes.length === 0) {
+    const recEmpty = document.createElement('div');
+    recEmpty.style.cssText = 'color:#3a3a3a;font-size:10px;text-align:center;padding:10px 8px;line-height:1.7;';
+    recEmpty.textContent = 'No recipes yet.\nDefine ingredient combinations that craft new items.';
+    panel.appendChild(recEmpty);
+  } else {
+    recipes.forEach(rec => {
+      const rrow = document.createElement('div');
+      rrow.style.cssText = 'display:flex;align-items:center;gap:4px;padding:5px 6px;margin-bottom:4px;background:#1e1e1e;border:1px solid #2a2a2a;border-radius:3px;flex-wrap:wrap;';
+
+      function makeTilePill(templateId, count) {
+        const tmpl = itemTemplates.find(t => t.id === templateId);
+        const pill = document.createElement('div');
+        pill.style.cssText = 'display:flex;align-items:center;gap:3px;';
+        const cv = document.createElement('canvas'); cv.width=20; cv.height=20;
+        cv.style.cssText='border:1px solid #333;image-rendering:pixelated;background:#161412;flex-shrink:0;';
+        if (tmpl?.tileId >= 0) {
+          const pc = cv.getContext('2d');
+          pc.fillStyle = tintTable[tmpl.tileId] || DEFAULT_TINT; pc.fillRect(0,0,20,20);
+          const bid = tileBaseMap.has(tmpl.tileId) ? tileBaseMap.get(tmpl.tileId) : (tmpl.tileId < TOTAL_TILES ? tmpl.tileId : -1);
+          if (bid >= 0) {
+            const img = tileImgs[bid];
+            if (img?.complete && img.naturalWidth > 0) {
+              pc.save(); pc.globalCompositeOperation='multiply'; pc.imageSmoothingEnabled=false;
+              pc.drawImage(img,0,0,16,16,0,0,20,20); pc.restore();
+            }
+          }
+        }
+        const lbl = document.createElement('span');
+        lbl.style.cssText='color:#888;font-size:10px;';
+        lbl.textContent = `${tmpl?.name ?? '?'}${count > 1 ? ' ×'+count : ''}`;
+        pill.append(cv, lbl);
+        return pill;
+      }
+
+      rec.inputs.forEach((ing, i) => {
+        if (i > 0) {
+          const plus = document.createElement('span'); plus.textContent='+'; plus.style.cssText='color:#444;font-size:11px;';
+          rrow.appendChild(plus);
+        }
+        rrow.appendChild(makeTilePill(ing.templateId, ing.count));
+      });
+
+      const arr = document.createElement('span'); arr.textContent='→'; arr.style.cssText='color:#3a7a4a;font-size:11px;margin:0 2px;';
+      rrow.appendChild(arr);
+      rrow.appendChild(makeTilePill(rec.output.templateId, rec.output.count));
+
+      const editRBtn = document.createElement('button');
+      editRBtn.className='tbtn mibtn'; editRBtn.textContent='✏'; editRBtn.title='Edit recipe';
+      editRBtn.style.marginLeft='auto';
+      editRBtn.onclick = () => openRecipeModal(rec.id);
+      rrow.appendChild(editRBtn);
+
+      panel.appendChild(rrow);
+    });
+  }
+}
+
 // ── Assets Panel ──────────────────────────────────────────
 function renderAssetsPanel() {
   const panel = document.getElementById('assets-panel');
@@ -2977,76 +4107,6 @@ function renderAssetsPanel() {
     panel.appendChild(row);
   });
 
-  // ── NPC Templates section ──────────────────────────────────
-  const sep = document.createElement('div');
-  sep.style.cssText = 'height:1px;background:#2a2a2a;margin:12px 0;';
-  panel.appendChild(sep);
-
-  const tmplHdr = document.createElement('div');
-  tmplHdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
-  const tmplTitle = document.createElement('span');
-  tmplTitle.style.cssText = 'flex:1;color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;';
-  tmplTitle.textContent = 'NPC Templates';
-  const newTmplBtn = document.createElement('button');
-  newTmplBtn.className = 'tbtn import-btn'; newTmplBtn.textContent = '+ New Template';
-  newTmplBtn.style.fontSize = '10px';
-  newTmplBtn.onclick = () => openNpcTemplateModal(null);
-  tmplHdr.append(tmplTitle, newTmplBtn);
-  panel.appendChild(tmplHdr);
-
-  if (npcTemplates.length === 0) {
-    const empty = document.createElement('div');
-    empty.style.cssText = 'color:#3a3a3a;font-size:10px;text-align:center;padding:14px 8px;line-height:1.7;';
-    empty.textContent = 'No templates yet.\nCreate one to pre-configure NPCs with tile and portrait.';
-    panel.appendChild(empty);
-  } else {
-    npcTemplates.forEach(tmpl => {
-      const trow = document.createElement('div');
-      trow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px;margin-bottom:4px;background:#1e1e1e;border:1px solid #2a2a2a;border-radius:3px;';
-
-      // Tile mini-preview
-      const tpv = document.createElement('canvas'); tpv.width = 24; tpv.height = 24;
-      tpv.style.cssText = 'border:1px solid #333;image-rendering:pixelated;background:#161412;flex-shrink:0;';
-      if (tmpl.tileId >= 0) {
-        const pc = tpv.getContext('2d');
-        pc.fillStyle = tintTable[tmpl.tileId] || DEFAULT_TINT; pc.fillRect(0, 0, 24, 24);
-        const bid = tileBaseMap.has(tmpl.tileId) ? tileBaseMap.get(tmpl.tileId) : (tmpl.tileId < TOTAL_TILES ? tmpl.tileId : -1);
-        if (bid >= 0) {
-          const img = tileImgs[bid];
-          if (img?.complete && img.naturalWidth > 0) {
-            pc.save(); pc.globalCompositeOperation = 'multiply'; pc.imageSmoothingEnabled = false;
-            pc.drawImage(img, 0, 0, 16, 16, 0, 0, 24, 24); pc.restore();
-          }
-        }
-      }
-      trow.appendChild(tpv);
-
-      // Portrait thumbnail
-      if (tmpl.portrait?.dataUrl) {
-        const pimg = document.createElement('img');
-        pimg.src = tmpl.portrait.dataUrl;
-        pimg.style.cssText = 'width:24px;height:24px;object-fit:cover;border:1px solid #333;image-rendering:pixelated;flex-shrink:0;';
-        trow.appendChild(pimg);
-      }
-
-      // Info
-      const tinfo = document.createElement('div'); tinfo.style.cssText = 'flex:1;min-width:0;';
-      const tname = document.createElement('div');
-      tname.style.cssText = 'color:#3ab8dc;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      tname.textContent = tmpl.displayName;
-      const tsub = document.createElement('div');
-      tsub.style.cssText = 'color:#444;font-size:10px;';
-      tsub.textContent = `Tile #${tmpl.tileId}${tmpl.portrait ? ' • portrait ★' : ''}`;
-      tinfo.append(tname, tsub);
-
-      const editTBtn = document.createElement('button');
-      editTBtn.className = 'tbtn mibtn'; editTBtn.textContent = '✏'; editTBtn.title = 'Edit template';
-      editTBtn.onclick = () => openNpcTemplateModal(tmpl.id);
-
-      trow.append(tinfo, editTBtn);
-      panel.appendChild(trow);
-    });
-  }
 }
 
 // Slice a packed tileset image (any size) into 16×16 tiles and populate tileImgs[].
@@ -3228,14 +4288,19 @@ function closeMapsPopup() {
 
 function switchTab(tab) {
   if (tab === 'editor') { openTileEditorPopup(); return; }
-  if (tab === 'maps')   { openMapsPopup(); return; }
-  const showPalette = tab === 'palette';
-  document.getElementById('palette-canvas').style.display = showPalette ? 'block' : 'none';
-  document.getElementById('maps-panel'    ).style.display = 'none';
-  document.getElementById('assets-panel'    ).style.display = tab === 'assets' ? 'block' : 'none';
-  ['palette','assets'].forEach(t =>
-    document.getElementById('tab-' + t).classList.toggle('active', t === tab)
-  );
+  if (tab === 'maps')   { return; } // maps always visible in the left sidebar
+  const tabs    = ['palette','npcs','items','assets'];
+  const panels  = { palette:'palette-canvas', npcs:'npcs-panel', items:'items-panel', assets:'assets-panel' };
+  tabs.forEach(t => {
+    document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+  });
+  // Show/hide panels (palette-canvas is the canvas; others are divs)
+  document.getElementById('palette-canvas').style.display = tab === 'palette' ? 'block' : 'none';
+  document.getElementById('npcs-panel'    ).style.display = tab === 'npcs'    ? 'block' : 'none';
+  document.getElementById('items-panel'   ).style.display = tab === 'items'   ? 'block' : 'none';
+  document.getElementById('assets-panel'  ).style.display = tab === 'assets'  ? 'block' : 'none';
+  if (tab === 'npcs')   renderNpcsPanel();
+  if (tab === 'items')  renderItemsPanel();
   if (tab === 'assets') renderAssetsPanel();
 }
 
@@ -3316,6 +4381,8 @@ function saveFile() {
     customTiles: serializeCustomTiles(),
     assets,
     npcTemplates,
+    itemTemplates,
+    recipes,
   };
   const blob = new Blob([JSON.stringify(data)], { type:'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -3328,7 +4395,7 @@ function loadFile() { document.getElementById('file-input').click(); }
 
 function loadWorldData(data) {
   worldMaps = (data.maps || []).map(m => ({
-    exits: [], npcs: [], triggers: [], items: [], ...m,  // ensure arrays exist on legacy maps
+    exits: [], npcs: [], triggers: [], items: [], music: [], ...m,  // ensure arrays exist on legacy maps
   }));
   if (data.tintTable)    tintTable        = [...data.tintTable];
   if (data.typeTable)    typeTable        = [...data.typeTable];
@@ -3336,7 +4403,9 @@ function loadWorldData(data) {
   if (data.nextCustomTileId) nextCustomTileId = data.nextCustomTileId;
   if (data.customTiles)  deserializeCustomTiles(data.customTiles);
   assets = { tileset: null, tileset2: null, ...( data.assets || {} ) };
-  npcTemplates = Array.isArray(data.npcTemplates) ? [...data.npcTemplates] : [];
+  npcTemplates  = Array.isArray(data.npcTemplates)  ? [...data.npcTemplates]  : [];
+  itemTemplates = Array.isArray(data.itemTemplates) ? [...data.itemTemplates] : [];
+  recipes       = Array.isArray(data.recipes)       ? [...data.recipes]       : [];
 
   // Restore sheet counts before loading tilesets so sheet2 IDs are offset correctly
   if (data.sheet1TileCount) {
@@ -3612,7 +4681,29 @@ mapCanvas.addEventListener('mousedown', e => {
   const rect=mapCanvas.getBoundingClientRect();
   const mx=e.clientX-rect.left, my=e.clientY-rect.top;
 
-  if(e.button===1||(e.button===0&&e.altKey)) {
+  // ── Waypoint pick mode ──────────────────────────────────
+  if (npcWaypointPickMode?.interactive) {
+    if (e.button === 0 && !e.altKey) {
+      const {r,c} = screenToCell(mx, my);
+      if (r >= 0 && r < MAP_ROWS && c >= 0 && c < MAP_COLS) {
+        npcWaypointPickMode.points.push({ row: r, col: c });
+        npcWaypointPickMode.onUpdate(npcWaypointPickMode.points);
+        renderMap();
+      }
+      return;
+    }
+    if (e.button === 2) {
+      if (npcWaypointPickMode.points.length) {
+        npcWaypointPickMode.points.pop();
+        npcWaypointPickMode.onUpdate(npcWaypointPickMode.points);
+        renderMap();
+      }
+      return;
+    }
+    // Middle-click / alt+drag fall through to normal pan handling
+  }
+
+  if(e.button===1||(e.button===0&&e.altKey&&!altEyedropper)) {
     isPanning=true; panOrigin={mx,my,cx:camX,cy:camY};
     mapCanvas.style.cursor='grabbing'; return;
   }
@@ -3623,6 +4714,16 @@ mapCanvas.addEventListener('mousedown', e => {
   }
   if(e.button===0) {
     const {r,c}=screenToCell(mx,my);
+    // Alt held while paint tool → temporary eyedropper: pick tile, stay on paint
+    if(altEyedropper) {
+      if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
+        const picked = isOverlayTile()
+          ? (overlayMap[r]?.[c] ?? -1)
+          : tileMap[r][c];
+        if(picked>=0) { selTile=picked; renderPalette(); renderPreview(); }
+      }
+      return;
+    }
     if(tool==='fill') { floodFill(r,c); }
     else if(tool==='pick') {
       const mt=(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS)?tileMap[r][c]:-1;
@@ -3731,6 +4832,12 @@ mapCanvas.addEventListener('wheel', e => {
 // ── Toolbar ────────────────────────────────────────────────
 document.getElementById('btn-paint').onclick=()=>setTool('paint');
 document.getElementById('btn-erase').onclick=()=>setTool('erase');
+document.querySelectorAll('.eraser-sz').forEach(btn => {
+  btn.addEventListener('click', () => {
+    eraserSize = +btn.dataset.sz;
+    document.querySelectorAll('.eraser-sz').forEach(b => b.classList.toggle('active', b === btn));
+  });
+});
 document.getElementById('btn-fill' ).onclick=()=>setTool('fill');
 document.getElementById('btn-pick' ).onclick=()=>setTool('pick');
 document.getElementById('btn-exit'  ).onclick=()=>setTool('exit');
@@ -3747,7 +4854,6 @@ function handleInsertSelect(val) {
   if (val === 'npc')   { setTool('npc');   toast('Click any cell to place / edit an NPC'); }
   if (val === 'item')  { setTool('item');  toast('Click any cell to place / edit an Item'); }
 }
-document.getElementById('btn-maps'  ).onclick=()=>openMapsPopup();
 document.getElementById('btn-trigger').onclick=()=>{ setTool('trigger'); toast('Click any cell to place / edit a trigger'); };
 document.getElementById('zoom-select').addEventListener('change', e => setZoom(parseInt(e.target.value)));
 document.getElementById('btn-grid' ).onclick=()=>{
@@ -3757,16 +4863,42 @@ document.getElementById('btn-grid' ).onclick=()=>{
 };
 document.getElementById('btn-preview').onclick = () => {
   flushCurrentMap();
+
+  // Build preview data — inject in-memory audio dataUrls so the game can play them
+  // without needing files on disk. These are NOT saved to world.json (session-only).
+  const previewMaps = worldMaps.map(m => ({
+    ...m,
+    music: (m.music || []).map(t => ({
+      ...t,
+      dataUrl: _musicBlobUrls.get(t.name) ?? null,
+    })),
+  }));
+
   const data = {
-    version: 3, currentMapId, maps: worldMaps,
+    version: 3, currentMapId,
+    maps: previewMaps,                          // maps with temporary audio dataUrls
     tintTable, typeTable, customNames, nextCustomTileId,
     sheet1TileCount: SHEET1_TILE_COUNT,
-    customTiles: serializeCustomTiles(), assets, npcTemplates,
+    customTiles: serializeCustomTiles(), assets, npcTemplates, itemTemplates, recipes,
   };
-  try {
-    localStorage.setItem('preview_world', JSON.stringify(data));
-    window.open('game.html', '_blank');
-  } catch(e) { alert('Preview failed (world may be too large for localStorage): ' + e.message); }
+
+  // Use BroadcastChannel — no size limit, works with large audio data.
+  // Editor listens for "ready" from the game, then sends the world data.
+  const ch = new BroadcastChannel('game_preview');
+  let sent = false;
+  ch.onmessage = ev => {
+    if (ev.data === 'ready' && !sent) {
+      sent = true;
+      ch.postMessage({ type: 'world', data });
+      ch.close();
+    }
+  };
+  // Fallback: if game doesn't respond in 2 s (e.g. slow load), send anyway
+  setTimeout(() => {
+    if (!sent) { sent = true; ch.postMessage({ type: 'world', data }); ch.close(); }
+  }, 2000);
+
+  window.open('game.html', '_blank');
 };
 document.getElementById('btn-import'   ).onclick=importModal;
 document.getElementById('btn-save'     ).onclick=saveFile;
@@ -3830,9 +4962,34 @@ editorCanvas.addEventListener('mousemove', e => {
 });
 
 // ── Keyboard ───────────────────────────────────────────────
+// Alt held while paint brush active → temporary eyedropper cursor
+document.addEventListener('keydown', e => {
+  if (e.key === 'Alt' && tool === 'paint' && !altEyedropper) {
+    e.preventDefault(); // suppress browser alt-focus-menubar behaviour
+    altEyedropper = true;
+    mapCanvas.style.cursor = 'zoom-in';
+    renderMap();
+  }
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'Alt' && altEyedropper) {
+    altEyedropper = false;
+    mapCanvas.style.cursor = 'crosshair';
+    renderMap();
+  }
+});
+
 document.addEventListener('keydown', e => {
   const tag=document.activeElement?.tagName;
   if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+  // ESC exits waypoint pick mode
+  if (e.key === 'Escape' && npcWaypointPickMode?.interactive) {
+    document.getElementById('_wp-toolbar')?.remove();
+    if (npcWaypointPickMode.modalOv) npcWaypointPickMode.modalOv.style.display = '';
+    npcWaypointPickMode.interactive = false;
+    renderMap();
+    return;
+  }
   switch(e.key.toLowerCase()) {
     case 'b': setTool('paint');  break;
     case 'e': setTool('erase');  break;
@@ -3868,7 +5025,7 @@ function autosave() {
       version: 3, currentMapId, maps: worldMaps,
       tintTable, typeTable, customNames, nextCustomTileId,
       sheet1TileCount: SHEET1_TILE_COUNT,
-      customTiles: serializeCustomTiles(), assets, npcTemplates,
+      customTiles: serializeCustomTiles(), assets, npcTemplates, itemTemplates, recipes,
     };
     localStorage.setItem('editor_world', JSON.stringify(data));
     // Clean up legacy keys

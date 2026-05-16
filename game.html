@@ -303,8 +303,9 @@ document.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (!gameStarted) startGame();
   if (gameStarted) {
-    if (e.code === 'KeyI') showInventory = !showInventory;
-    if (e.code === 'Escape') showInventory = false;
+    if (e.code === 'KeyI') { showInventory = !showInventory; if (showInventory) showCrafting = false; }
+    if (e.code === 'KeyC') { showCrafting  = !showCrafting;  if (showCrafting)  showInventory = false; }
+    if (e.code === 'Escape') { showInventory = false; showCrafting = false; }
   }
 });
 document.addEventListener('keyup', e => {
@@ -329,6 +330,15 @@ document.addEventListener('mousemove', e => {
 canvas.addEventListener('mousedown', e => {
   if (e.button === 0) mouse.justDown = true;
   if (!gameStarted) startGame();
+});
+document.addEventListener('mousedown', e => {
+  if (e.button === 0 && showCrafting && craftClickRecipe) {
+    if (doCraft(craftClickRecipe)) {
+      // success toast already spawned inside doCraft
+    } else {
+      spawnFloat(hudCanvas.width/2 - cam.x, hudCanvas.height/2 - cam.y - 40, 'Not enough materials', '#ff6644');
+    }
+  }
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -423,13 +433,21 @@ const worldTileCache  = new Map(); // tileId → off-screen canvas (16×16) for 
 let mapTrans = { active:false, phase:'none', timer:0, toMapId:null, toRow:0, toCol:0 };
 
 // Return off-screen 16×16 canvas for a custom tile's pixel edits, cached.
+// Near-white pixels (R,G,B > 200) are made transparent — same rule as
+// buildProcessedSheet — so duplicated sprite-sheet tiles don't show a white box.
 function getWorldTileCanvas(mt) {
   if (worldTileCache.has(mt)) return worldTileCache.get(mt);
   const ct = worldData?.customTiles?.[mt];
   if (!ct?.pixels) { worldTileCache.set(mt, null); return null; }
   const cv = document.createElement('canvas'); cv.width = cv.height = 16;
   const cx = cv.getContext('2d');
-  const id = cx.createImageData(16, 16); id.data.set(ct.pixels);
+  const id = cx.createImageData(16, 16);
+  id.data.set(ct.pixels);
+  // Strip near-white background pixels left over from sprite-sheet duplication
+  const d = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i] > 200 && d[i+1] > 200 && d[i+2] > 200) d[i+3] = 0;
+  }
   cx.putImageData(id, 0, 0);
   worldTileCache.set(mt, cv);
   return cv;
@@ -444,22 +462,22 @@ function drawTile(r,c) {
     return;
   }
   if (worldData) {
-    // Use world tintTable; support custom pixel tiles
-    const tint = worldData.tintTable?.[mt] || '#ffffff';
-    ctx.fillStyle = tint;
-    ctx.fillRect(dx, dy, TS, TS);
-    ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.imageSmoothingEnabled = false;
+    // Use pre-processed transparent sheet (white → alpha 0) for all tiles,
+    // same as NPC and overlay tiles, so no solid background box shows through.
     const ct     = worldData.customTiles?.[mt];
     const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : mt;
     if (baseId >= 0) {
-      const si = getTileSheet(baseId);
-      if (si) ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, dx, dy, TS, TS);
+      const si = getProcSheet(baseId);
+      if (si) {
+        ctx.save(); ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, dx, dy, TS, TS);
+        ctx.restore();
+      }
     }
     if (ct?.pixels) {
-      ctx.globalCompositeOperation = 'source-over';
-      const cv = getWorldTileCanvas(mt); if (cv) ctx.drawImage(cv, dx, dy, TS, TS);
+      const cv = getWorldTileCanvas(mt);
+      if (cv) { ctx.save(); ctx.imageSmoothingEnabled = false; ctx.drawImage(cv, dx, dy, TS, TS); ctx.restore(); }
     }
-    ctx.restore();
   } else {
     drawMonoTile(mt, dx, dy, '#ffffff');
   }
@@ -475,11 +493,9 @@ function drawMap() {
   for (let r = r0; r <= r1; r++)
     for (let c = c0; c <= c1; c++)
       drawTile(r, c);
-  // Overlay layer — drawn on top; skip background fill so base tile shows through
+  // Overlay layer — use pre-processed transparent sheet (same as NPC tiles)
+  // so white pixels are alpha=0 and no background box shows through.
   if (visualOverlay && worldData) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.imageSmoothingEnabled = false;
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) {
         const ot = visualOverlay[r]?.[c] ?? -1;
@@ -488,17 +504,20 @@ function drawMap() {
         const ct = worldData.customTiles?.[ot];
         const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : ot;
         if (baseId >= 0) {
-          const si = getTileSheet(baseId);
-          if (si) ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, dx, dy, TS, TS);
+          // getProcSheet has white/near-white pixels as alpha=0 — no multiply needed
+          const si = getProcSheet(baseId);
+          if (si) {
+            ctx.save(); ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(si.sh, (si.localId%si.mc)*16, Math.floor(si.localId/si.mc)*16, 16, 16, dx, dy, TS, TS);
+            ctx.restore();
+          }
         }
         if (ct?.pixels) {
-          ctx.globalCompositeOperation = 'source-over';
-          const cv = getWorldTileCanvas(ot); if (cv) ctx.drawImage(cv, dx, dy, TS, TS);
-          ctx.globalCompositeOperation = 'multiply';
+          const cv = getWorldTileCanvas(ot);
+          if (cv) { ctx.save(); ctx.imageSmoothingEnabled = false; ctx.drawImage(cv, dx, dy, TS, TS); ctx.restore(); }
         }
       }
     }
-    ctx.restore();
   }
 }
 
@@ -555,6 +574,15 @@ function resolveCollision(entity, nx, ny) {
     [ r, 0], [-r, 0], [0, -r], [0, r],
     [ S, S], [-S, S], [ S,-S], [-S,-S],
   ];
+  // If any of the entity's collision points overlap an impassable tile, allow
+  // free movement until they fully escape (e.g. NPC placed on an overlay-block).
+  // Using all 8 points (not just center) means escape continues until the
+  // entity's entire radius has cleared the bad tile, preventing re-sticking.
+  const escaping = pts.some(([ddx, ddy]) =>
+    !passable(Math.floor((entity.y + ddy) / TS), Math.floor((entity.x + ddx) / TS))
+  );
+  if (escaping) return { x: nx, y: ny };
+
   let xOk = true, yOk = true;
   for (const [dx, dy] of pts) {
     if (!passable(Math.floor((entity.y + dy) / TS), Math.floor((nx + dx) / TS))) {
@@ -1019,6 +1047,143 @@ function drawInventory() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// CRAFTING UI
+// ════════════════════════════════════════════════════════════════════════════
+function drawCrafting() {
+  if (!showCrafting) return;
+  const hs       = hudScale;
+  const allRec   = getRecipes();
+
+  const SLOT   = 40 * hs;
+  const GAP    = 6  * hs;
+  const PAD    = 16 * hs;
+  const TIT_H  = 30 * hs;
+  const ROW_H  = SLOT + 10 * hs;
+  const panW   = Math.min(400 * hs, hudCanvas.width - 40 * hs);
+  const panH   = PAD * 2 + TIT_H + Math.max(1, allRec.length) * ROW_H + GAP;
+  const panX   = (hudCanvas.width  - panW) / 2;
+  const panY   = (hudCanvas.height - panH) / 2;
+
+  // Dim backdrop
+  hudCtx.fillStyle = 'rgba(0,0,0,0.6)';
+  hudCtx.fillRect(0, 0, hudCanvas.width, hudCanvas.height);
+
+  // Panel bg
+  hudCtx.fillStyle = 'rgba(5,20,10,0.97)';
+  hudCtx.fillRect(panX, panY, panW, panH);
+  hudCtx.strokeStyle = '#44aa66'; hudCtx.lineWidth = 2;
+  hudCtx.strokeRect(panX, panY, panW, panH);
+  hudCtx.strokeStyle = '#1a4a2a'; hudCtx.lineWidth = 1;
+  hudCtx.strokeRect(panX + 3, panY + 3, panW - 6, panH - 6);
+
+  // Title
+  hudCtx.fillStyle = '#88ddaa';
+  hudCtx.font = `bold ${hF(13)}px Georgia`;
+  hudCtx.textAlign = 'center';
+  hudCtx.fillText('Crafting', panX + panW / 2, panY + PAD + TIT_H * 0.65);
+  hudCtx.fillStyle = '#2a5a3a'; hudCtx.font = `${hF(9)}px Georgia`;
+  hudCtx.textAlign = 'right';
+  hudCtx.fillText('[C] Close', panX + panW - PAD, panY + PAD + TIT_H * 0.65);
+  hudCtx.textAlign = 'left';
+
+  // Divider
+  const divY = panY + PAD + TIT_H;
+  hudCtx.strokeStyle = '#1a4a2a'; hudCtx.lineWidth = 1;
+  hudCtx.beginPath(); hudCtx.moveTo(panX + PAD, divY); hudCtx.lineTo(panX + panW - PAD, divY); hudCtx.stroke();
+
+  craftClickRecipe = null;
+
+  if (allRec.length === 0) {
+    hudCtx.fillStyle = '#2a4a30'; hudCtx.font = `${hF(10)}px Georgia`;
+    hudCtx.textAlign = 'center';
+    hudCtx.fillText('No recipes available', panX + panW / 2, divY + 28 * hs);
+    hudCtx.textAlign = 'left';
+    return;
+  }
+
+  allRec.forEach((rec, i) => {
+    const craftable = canCraft(rec);
+    const ry  = divY + GAP + i * ROW_H;
+    const rh  = ROW_H - GAP * 0.5;
+    const isHov = hudMouseX >= panX + GAP && hudMouseX < panX + panW - GAP &&
+                  hudMouseY >= ry && hudMouseY < ry + rh;
+    if (isHov && craftable) craftClickRecipe = rec;
+
+    // Row bg
+    hudCtx.fillStyle = isHov && craftable ? 'rgba(60,130,80,0.45)'
+                     : craftable          ? 'rgba(20,50,30,0.6)'
+                                          : 'rgba(15,15,15,0.5)';
+    hudCtx.fillRect(panX + GAP, ry, panW - GAP * 2, rh);
+    hudCtx.strokeStyle = craftable ? (isHov ? '#66cc88' : '#3a7a4a') : '#1e2e20';
+    hudCtx.lineWidth = craftable ? 1.5 : 1;
+    hudCtx.strokeRect(panX + GAP, ry, panW - GAP * 2, rh);
+
+    // Ingredient icons
+    let cx = panX + GAP * 2;
+    const cy = ry + (rh - SLOT) / 2;
+
+    rec.inputs.forEach((ing, j) => {
+      if (j > 0) {
+        hudCtx.fillStyle = craftable ? '#669966' : '#334433';
+        hudCtx.font = `bold ${hF(11)}px Georgia`;
+        hudCtx.textAlign = 'center'; hudCtx.textBaseline = 'middle';
+        hudCtx.fillText('+', cx + GAP * 0.6, cy + SLOT / 2);
+        hudCtx.textAlign = 'left'; hudCtx.textBaseline = 'alphabetic';
+        cx += GAP * 1.8;
+      }
+      drawItemIconHud(ing.templateId, cx, cy, SLOT, craftable ? 1 : 0.35);
+      // count badge
+      if ((ing.count || 1) > 1) {
+        hudCtx.fillStyle = 'rgba(0,0,0,0.75)';
+        hudCtx.fillRect(cx + SLOT - 14*hs, cy + SLOT - 13*hs, 13*hs, 13*hs);
+        hudCtx.fillStyle = craftable ? '#aaddaa' : '#445544';
+        hudCtx.font = `bold ${hF(7)}px Georgia`;
+        hudCtx.textAlign = 'center'; hudCtx.textBaseline = 'middle';
+        hudCtx.fillText(ing.count, cx + SLOT - 7.5*hs, cy + SLOT - 6.5*hs);
+        hudCtx.textAlign = 'left'; hudCtx.textBaseline = 'alphabetic';
+      }
+      cx += SLOT + GAP * 0.5;
+    });
+
+    // Arrow
+    hudCtx.fillStyle = craftable ? '#66cc88' : '#2a4a30';
+    hudCtx.font = `${hF(13)}px Georgia`;
+    hudCtx.textAlign = 'center'; hudCtx.textBaseline = 'middle';
+    hudCtx.fillText('→', cx + GAP, cy + SLOT / 2);
+    hudCtx.textAlign = 'left'; hudCtx.textBaseline = 'alphabetic';
+    cx += GAP * 2.5;
+
+    // Output icon
+    drawItemIconHud(rec.output.templateId, cx, cy, SLOT, craftable ? 1 : 0.35);
+    if ((rec.output.count || 1) > 1) {
+      hudCtx.fillStyle = 'rgba(0,0,0,0.75)';
+      hudCtx.fillRect(cx + SLOT - 14*hs, cy + SLOT - 13*hs, 13*hs, 13*hs);
+      hudCtx.fillStyle = craftable ? '#ffdd88' : '#554422';
+      hudCtx.font = `bold ${hF(7)}px Georgia`;
+      hudCtx.textAlign = 'center'; hudCtx.textBaseline = 'middle';
+      hudCtx.fillText(rec.output.count, cx + SLOT - 7.5*hs, cy + SLOT - 6.5*hs);
+      hudCtx.textAlign = 'left'; hudCtx.textBaseline = 'alphabetic';
+    }
+    cx += SLOT + GAP;
+
+    // Output name label + craft hint
+    const outTmpl = getItemTemplates().find(t => t.id === rec.output.templateId);
+    if (outTmpl) {
+      hudCtx.fillStyle = craftable ? '#ffcc44' : '#445544';
+      hudCtx.font = `${hF(10)}px Georgia`;
+      hudCtx.textBaseline = 'middle';
+      hudCtx.fillText(outTmpl.name, cx, cy + SLOT * 0.38);
+      if (craftable) {
+        hudCtx.fillStyle = isHov ? '#88ddaa' : '#336644';
+        hudCtx.font = `${hF(9)}px Georgia`;
+        hudCtx.fillText(isHov ? 'Click to craft' : '✓ can craft', cx, cy + SLOT * 0.72);
+      }
+      hudCtx.textBaseline = 'alphabetic';
+    }
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // HUD
 // ════════════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════════════
@@ -1089,18 +1254,69 @@ function drawDayNight() {
 }
 
 function drawHUD() {
-  // Hearts and dash bar removed
+  if (showInventory || showCrafting || activeDialog) return;
+  const hs = hudScale;
+  const bx = hudCanvas.width - 9 * hs;
+  let by = hudCanvas.height - 9 * hs;
+
+  hudCtx.font = `${hF(9)}px Georgia`;
+  hudCtx.textAlign = 'right';
+
+  // [C] Crafting hint
+  const hasRecipes = getRecipes().length > 0;
+  const craftLabel = hasRecipes ? '[C] Craft' : '[C] Craft';
+  hudCtx.fillStyle = 'rgba(0,0,0,0.5)';
+  hudCtx.fillText(craftLabel, bx+1, by+1);
+  hudCtx.fillStyle = hasRecipes ? '#88ddaa' : '#335544';
+  hudCtx.fillText(craftLabel, bx, by);
+  by -= 14 * hs;
+
+  // [I] Inventory hint
+  const invCount = inventory.length;
+  const invLabel = invCount > 0 ? `[I] Inventory (${invCount})` : '[I] Inventory';
+  hudCtx.fillStyle = 'rgba(0,0,0,0.5)';
+  hudCtx.fillText(invLabel, bx+1, by+1);
+  hudCtx.fillStyle = invCount > 0 ? '#ffcc44' : '#555577';
+  hudCtx.fillText(invLabel, bx, by);
+
+  hudCtx.textAlign = 'left';
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // NPC PATROL
 // ════════════════════════════════════════════════════════════════════════════
-const NPC_WALK_SPEED = 36; // world-pixels per second
+const NPC_WALK_SPEED = 80; // world-pixels per second (~1.5 tiles/sec)
+
+// Try to find a passable wander destination for an NPC.
+// Attempts 12 random angles at 3 distinct radius tiers, then falls back to
+// checking all 8 adjacent cells — guarantees movement in any narrow corridor.
+// Returns {x,y} or null if truly surrounded by walls.
+function pickWanderTarget(npc) {
+  const maxR  = (npc.patrol.radius ?? 3) * TS;
+  const TRIES = 12;
+  // Three distinct tiers: full radius → half (min 2 tiles) → 1 tile
+  for (const tierR of [maxR, Math.max(TS * 2, maxR * 0.5), TS]) {
+    const r = Math.max(TS, tierR);
+    for (let i = 0; i < TRIES; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const tx = clamp(npc.homeX + Math.cos(angle) * r, TS * 0.5, (MAP_COLS - 0.5) * TS);
+      const ty = clamp(npc.homeY + Math.sin(angle) * r, TS * 0.5, (MAP_ROWS - 0.5) * TS);
+      if (passable(Math.floor(ty / TS), Math.floor(tx / TS))) return { x: tx, y: ty };
+    }
+  }
+  // Deterministic fallback: check all 8 adjacent cells (catches narrow corridors)
+  const hr = Math.floor(npc.homeY / TS), hc = Math.floor(npc.homeX / TS);
+  for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]]) {
+    const nr = hr + dr, nc = hc + dc;
+    if (passable(nr, nc)) return { x: (nc + 0.5) * TS, y: (nr + 0.5) * TS };
+  }
+  return null; // truly surrounded — caller polls again shortly
+}
 
 function updateNPC(npc, dt) {
   const type = npc.patrol?.type ?? 'none';
   if (type === 'none') return;
-  if (activeDialog) return; // freeze patrol during conversations
+  if (activeDialog?.freezeNpcs) return; // freeze only during player-initiated conversations
 
   if (npc.patrolWait > 0) {
     npc.patrolWait -= dt;
@@ -1108,21 +1324,25 @@ function updateNPC(npc, dt) {
     return;
   }
 
-  // Pick the next target if we don't have one
+  // ── Pick a target if we don't have one ──────────────────────────────────
   if (!npc.patrolTarget) {
     if (type === 'wander') {
-      const angle = Math.random() * Math.PI * 2;
-      const r = (0.35 + Math.random() * 0.65) * (npc.patrol.radius ?? 3) * TS;
-      npc.patrolTarget = {
-        x: clamp(npc.homeX + Math.cos(angle) * r, TS * 0.5, (MAP_COLS - 0.5) * TS),
-        y: clamp(npc.homeY + Math.sin(angle) * r, TS * 0.5, (MAP_ROWS - 0.5) * TS),
-      };
+      const t = pickWanderTarget(npc);
+      if (!t) {
+        // No open tile found yet — keep polling (short wait, not frozen)
+        npc.patrolWait = 0.1;
+        console.log(`[NPC WANDER] "${npc.name}" no passable tile found, retrying in 0.1s`);
+        return;
+      }
+      npc.patrolTarget = t;
+      console.log(`[NPC WANDER] "${npc.name}" new target → (${(t.y/TS).toFixed(1)}r, ${(t.x/TS).toFixed(1)}c)`);
     } else if (type === 'waypoint') {
       const pts = npc.patrol.points ?? [];
       if (!pts.length) return;
       npc.patrolIdx = ((npc.patrolIdx ?? 0) + 1) % pts.length;
       const p = pts[npc.patrolIdx];
       npc.patrolTarget = { x: (p.col + 0.5) * TS, y: (p.row + 0.5) * TS };
+      console.log(`[NPC WAYPOINT] "${npc.name}" → point[${npc.patrolIdx}] (${p.row},${p.col})`);
     }
   }
 
@@ -1132,25 +1352,25 @@ function updateNPC(npc, dt) {
   const dy = npc.patrolTarget.y - npc.y;
   const d  = Math.hypot(dx, dy);
 
-  if (d < 3) {
-    // Arrived
-    npc.x = npc.patrolTarget.x;
-    npc.y = npc.patrolTarget.y;
+  if (d < 4) {
+    // Arrived at destination
     npc.patrolTarget = null;
     npc.patrolWait   = type === 'waypoint'
       ? 0.4 + Math.random() * 1.2
-      : 1.0 + Math.random() * 2.5;
+      : 1.0 + Math.random() * 2.0;
     npc.moving = false;
+    console.log(`[NPC ARRIVED] "${npc.name}" at (${(npc.y/TS).toFixed(1)}r, ${(npc.x/TS).toFixed(1)}c), waiting ${npc.patrolWait.toFixed(2)}s`);
   } else {
     const step = NPC_WALK_SPEED * dt;
     const nx   = npc.x + (dx / d) * step;
     const ny   = npc.y + (dy / d) * step;
     const res  = resolveCollision(npc, nx, ny);
     if (res.x === npc.x && res.y === npc.y) {
-      // Stuck — abandon this target and wait
+      // Completely blocked — ditch this target and pick a fresh direction immediately
       npc.patrolTarget = null;
-      npc.patrolWait   = 0.8;
+      npc.patrolWait   = 0; // re-enters pickWanderTarget next frame, no pause
       npc.moving       = false;
+      console.log(`[NPC BLOCKED] "${npc.name}" at (${(npc.y/TS).toFixed(1)}r, ${(npc.x/TS).toFixed(1)}c) → ditching target`);
     } else {
       npc.x           = res.x;
       npc.y           = res.y;
@@ -1176,7 +1396,10 @@ function updateSchedules() {
     if (slotKey === prevKey) return true; // no change
 
     const targetMap = slot ? slot.mapId : npc.homeMapId;
-    if (targetMap !== currentWorldMapId) return false; // despawn — they left
+    if (targetMap !== currentWorldMapId) {
+      console.log(`[NPC DESPAWN] "${npc.name}" (${npc._npcId}) left map → targetMap=${targetMap}`);
+      return false; // despawn — they left
+    }
 
     // Same map, new slot — update home position and patrol
     npc.scheduleSlot = slot;
@@ -1187,6 +1410,7 @@ function updateSchedules() {
     npc.homeY        = ty;
     npc.patrol       = buildPatrolFromSlot(slot);
     npc.patrolWait   = 0;
+    console.log(`[NPC RETARGET] "${npc.name}" slot changed → (${slot.row},${slot.col}) patrol=${npc.patrol.type}`);
     return true;
   });
 
@@ -1197,7 +1421,14 @@ function updateSchedules() {
       const slot = getScheduleSlot(n, gameTime);
       if (!slot || slot.mapId !== currentWorldMapId) continue;
       const id = n.id ?? (n.name + '@' + wm.id);
-      if (npcs.some(a => a._npcId === id)) continue; // already here
+      if (npcs.some(a => a._npcId === id)) continue; // already here by id
+      // Also block if another NPC is already occupying the exact spawn cell
+      const sr = slot.row, sc = slot.col;
+      if (npcs.some(a => Math.round(a.y/TS - 0.5) === sr && Math.round(a.x/TS - 0.5) === sc)) {
+        console.log(`[NPC SPAWN BLOCKED] "${n.name}" schedule→(${sr},${sc}) already occupied`);
+        continue;
+      }
+      console.log(`[NPC SPAWN schedule] "${n.name}" (${id}) arriving at (${sr},${sc}) from map ${wm.id}`);
       npcs.push(buildNpcInstance(n, wm.id, slot));
     }
   }
@@ -1207,9 +1438,9 @@ function updateSchedules() {
 // PLAYER
 // ════════════════════════════════════════════════════════════════════════════
 const player = {
-  x: SPAWN.player.col*TS + TS/2,
-  y: SPAWN.player.row*TS + TS/2,
-  radius: Math.round(TS * 0.52),   // ~33 px — scales with tile size
+  x: -9999, y: -9999,           // positioned only when a spawn point is resolved
+  spawned: false,                // true once a spawn position has been assigned
+  radius: Math.round(TS * 0.52),
   hp: CFG.hearts*CFG.heartHP, maxHP: CFG.hearts*CFG.heartHP,
   hurtTimer:0, invincTimer:0,
   facingRight:true, dead:false, kills:0,
@@ -1217,15 +1448,84 @@ const player = {
 
 function collectItem(item) {
   item.collected = true;
-  const slot = inventory.find(s => s.name === item.name && s.tileId === item.tileId);
+  const slot = inventory.find(s =>
+    item.templateId ? s.templateId === item.templateId : s.name === item.name && s.tileId === item.tileId
+  );
   if (slot) slot.count++;
-  else inventory.push({ name: item.name, tileId: item.tileId, description: item.description || '', count: 1 });
+  else inventory.push({ name: item.name, tileId: item.tileId, description: item.description || '', count: 1, templateId: item.templateId });
   spawnFloat(item.x - cam.x, item.y - cam.y - TS * 0.6, `+${item.name}`, '#ffcc44');
 }
 
+// ── Crafting helpers ──────────────────────────────────────
+function getItemTemplates() { return worldData?.itemTemplates || []; }
+function getRecipes()       { return worldData?.recipes       || []; }
+
+function invSlotFor(templateId) {
+  const tmpl = getItemTemplates().find(t => t.id === templateId);
+  if (!tmpl) return null;
+  return inventory.find(s => s.templateId === templateId || s.name === tmpl.name) || null;
+}
+
+function canCraft(recipe) {
+  return recipe.inputs.every(ing => {
+    const slot = invSlotFor(ing.templateId);
+    return slot && slot.count >= (ing.count || 1);
+  });
+}
+
+function doCraft(recipe) {
+  if (!canCraft(recipe)) return false;
+  // consume inputs
+  recipe.inputs.forEach(ing => {
+    const slot = invSlotFor(ing.templateId);
+    if (!slot) return;
+    slot.count -= (ing.count || 1);
+    if (slot.count <= 0) inventory.splice(inventory.indexOf(slot), 1);
+  });
+  // produce output
+  const outTmpl = getItemTemplates().find(t => t.id === recipe.output.templateId);
+  if (outTmpl) {
+    const qty = recipe.output.count || 1;
+    const existing = invSlotFor(outTmpl.id);
+    if (existing) existing.count += qty;
+    else inventory.push({ name:outTmpl.name, tileId:outTmpl.tileId, description:outTmpl.description||'', count:qty, templateId:outTmpl.id });
+    spawnFloat(player.x - cam.x, player.y - cam.y - TS, `✦ ${outTmpl.name}`, '#88ddaa');
+  }
+  return true;
+}
+
+// ── Draw a single item icon on the HUD canvas ─────────────
+function drawItemIconHud(templateId, x, y, size, alpha) {
+  const tmpl = getItemTemplates().find(t => t.id === templateId);
+  if (!tmpl || tmpl.tileId < 0) {
+    hudCtx.globalAlpha = alpha ?? 1;
+    hudCtx.fillStyle = '#ffcc44'; hudCtx.font = `${Math.round(size * 0.5)}px serif`;
+    hudCtx.textAlign = 'center'; hudCtx.textBaseline = 'middle';
+    hudCtx.fillText('◆', x + size/2, y + size/2);
+    hudCtx.textAlign = 'left'; hudCtx.textBaseline = 'alphabetic';
+    hudCtx.globalAlpha = 1;
+    return;
+  }
+  const ct     = worldData?.customTiles?.[tmpl.tileId];
+  const baseId = ct ? (ct.base >= 0 ? ct.base : -1) : tmpl.tileId;
+  hudCtx.globalAlpha = alpha ?? 1;
+  if (baseId >= 0) {
+    const tint = worldData?.tintTable?.[tmpl.tileId];
+    if (tint) { hudCtx.fillStyle = tint; hudCtx.fillRect(x, y, size, size); }
+    hudCtx.save();
+    hudCtx.globalCompositeOperation = tint ? 'multiply' : 'source-over';
+    hudCtx.imageSmoothingEnabled = false;
+    const mc = monoReady ? monoCol() : 17;
+    if (monoSheet && monoReady)
+      hudCtx.drawImage(monoSheet, (baseId % mc)*16, Math.floor(baseId/mc)*16, 16, 16, x, y, size, size);
+    hudCtx.restore();
+  }
+  hudCtx.globalAlpha = 1;
+}
+
 function updatePlayer(dt) {
-  if (player.dead) return;
-  if (showInventory) return; // freeze player while inventory is open
+  if (!player.spawned || player.dead) return;
+  if (showInventory || showCrafting) return; // freeze player while UI is open
 
   player.hurtTimer   = Math.max(0,player.hurtTimer-dt);
   player.invincTimer = Math.max(0,player.invincTimer-dt);
@@ -1275,7 +1575,7 @@ function updatePlayer(dt) {
       if (!acted) {
         for (const npc of npcs)
           if (dist(player.x,player.y,npc.x,npc.y) < 44 * TILE_SCALE) {
-            activeDialog={lines:npc.dialog,index:0,npcName:npc.name,portrait:npc.portraitImg??null}; acted=true; break;
+            activeDialog={lines:npc.dialog,index:0,npcName:npc.name,portrait:npc.portraitImg??null,freezeNpcs:true}; acted=true; break;
           }
       }
       if (!acted) checkInteractTriggers();
@@ -1350,11 +1650,14 @@ let triggers = [];
 let firedTriggers  = new Set();
 let triggerQueue   = [];   // remaining events for the active trigger
 let camPan         = null; // active camera pan state
+let camFrozen      = false; // true = camera stays at current position, don't follow player
 
-// ── Inventory ─────────────────────────────────────────────
-let inventory     = [];   // [{ name, tileId, description, count }]
+// ── Inventory + Crafting ───────────────────────────────────
+let inventory     = [];   // [{ name, tileId, description, count, templateId }]
 let mapItems      = [];   // items placed on the current map
 let showInventory = false;
+let showCrafting  = false;
+let craftClickRecipe = null; // recipe clicked this frame
 let hudMouseX = 0, hudMouseY = 0; // mouse position in hud canvas pixels
 
 // ── NPC Schedule helpers ─────────────────────────────────────────────────────
@@ -1388,12 +1691,12 @@ function buildNpcInstance(n, homeMapId, slot) {
     isElder:      false,
     radius:       Math.round(TS * 0.35),
     schedule:     n.schedule ?? [],
-    patrol:       slot ? buildPatrolFromSlot(slot) : (n.patrol ?? { type: 'none' }),
+    patrol:       slot ? buildPatrolFromSlot(slot) : (n.patrol?.type ? n.patrol : { type: 'none' }),
     homeX:        (col + 0.5) * TS,
     homeY:        (row + 0.5) * TS,
     patrolTarget: null,
-    patrolWait:   Math.random() * 2.5,
-    patrolIdx:    0,
+    patrolWait:   0,   // start immediately so NPCs are moving when mapload events run
+    patrolIdx:    -1,  // -1 so first increment lands on index 0
     moving:       false,
     facingRight:  true,
     scheduleSlot: slot ?? null, // track active slot for change detection
@@ -1403,6 +1706,96 @@ function buildNpcInstance(n, homeMapId, slot) {
   }
   return npc;
 }
+
+// ── Background Music ─────────────────────────────────────────────────────────
+// Supports multiple tracks per map; shuffled on each map load, cycles on end.
+// Fades out old track when switching maps, fades in new track.
+// Autoplay-safe: if the browser blocks play() before user interaction, the
+// pending tracks are queued and started on the first key/click.
+let _bgmAudio        = null;   // active HTMLAudioElement
+let _bgmTracks       = [];     // shuffled track list for current map
+let _bgmIdx          = 0;      // track index
+let _bgmFadeId       = null;   // setInterval handle for active fade
+let _bgmPending      = null;   // tracks waiting for user interaction unlock
+let _bgmUnlocked     = false;  // true once first interaction received
+
+function _bgmClearFade() {
+  if (_bgmFadeId !== null) { clearInterval(_bgmFadeId); _bgmFadeId = null; }
+}
+
+function _bgmPlayTrack(idx) {
+  const track = _bgmTracks[idx % _bgmTracks.length];
+  if (!track?.name) return;
+  // Load from music/ folder next to game.html (dataUrl kept for backward compat)
+  const src = track.dataUrl || ('music/' + track.name);
+  const audio = new Audio(src);
+  audio.volume = 0;
+  _bgmAudio = audio;
+  const promise = audio.play();
+  if (promise !== undefined) {
+    promise.catch(() => {
+      // Autoplay blocked — queue and retry on first interaction
+      if (_bgmAudio === audio) { _bgmPending = _bgmTracks; _bgmAudio = null; }
+    });
+  }
+  // Fade in over ~600 ms
+  _bgmFadeId = setInterval(() => {
+    if (_bgmAudio !== audio) { clearInterval(_bgmFadeId); _bgmFadeId = null; return; }
+    audio.volume = Math.min(1, audio.volume + 0.033);
+    if (audio.volume >= 1) { clearInterval(_bgmFadeId); _bgmFadeId = null; }
+  }, 20);
+  // Advance to next track when this one ends
+  audio.addEventListener('ended', () => {
+    if (_bgmAudio !== audio) return;
+    _bgmIdx = (_bgmIdx + 1) % _bgmTracks.length;
+    _bgmPlayTrack(_bgmIdx);
+  });
+}
+
+function _bgmBegin(tracks) {
+  if (!tracks?.length) { _bgmTracks = []; _bgmPending = null; return; }
+  _bgmTracks = [...tracks].sort(() => Math.random() - 0.5); // shuffle
+  _bgmIdx = 0;
+  _bgmPending = null;
+  _bgmPlayTrack(0);
+}
+
+function startBgm(tracks) {
+  _bgmClearFade();
+  _bgmPending = null;
+  const old = _bgmAudio;
+  _bgmAudio = null;
+  if (old && !old.paused) {
+    // Fade out old track over ~400 ms then begin new one
+    _bgmFadeId = setInterval(() => {
+      old.volume = Math.max(0, old.volume - 0.05);
+      if (old.volume <= 0) {
+        old.pause();
+        _bgmClearFade();
+        if (_bgmUnlocked) _bgmBegin(tracks);
+        else              _bgmPending = tracks?.length ? [...tracks] : null;
+      }
+    }, 20);
+  } else {
+    if (old) old.pause();
+    if (_bgmUnlocked) _bgmBegin(tracks);
+    else              _bgmPending = tracks?.length ? [...tracks] : null;
+  }
+}
+
+// Unlock audio on first user interaction (browser autoplay policy)
+function _bgmUnlock() {
+  if (_bgmUnlocked) return;
+  _bgmUnlocked = true;
+  if (_bgmPending) {
+    const t = _bgmPending; _bgmPending = null;
+    _bgmBegin(t);
+  } else if (_bgmAudio?.paused) {
+    _bgmAudio.play().catch(() => {});
+  }
+}
+['keydown','pointerdown','touchstart'].forEach(ev =>
+  document.addEventListener(ev, _bgmUnlock, { once: false, passive: true }));
 
 // ── Day/Night Cycle ──────────────────────────────────────────────────────────
 let gameTime = 360;               // game-minutes since midnight; 360 = 6:00 AM
@@ -1416,9 +1809,18 @@ function startCamPan(evt, onDone) {
   const worldW = MAP_COLS * TS, worldH = MAP_ROWS * TS;
   const tx = clamp((evt.col + 0.5) * TS - VW / 2, 0, worldW - VW);
   const ty = clamp((evt.row + 0.5) * TS - VH / 2, 0, worldH - VH);
+  // Optional explicit start position (used by mapload triggers that have no "current" player cam)
+  const sx = evt.fromRow != null && evt.fromCol != null
+    ? clamp((evt.fromCol + 0.5) * TS - VW / 2, 0, worldW - VW)
+    : cam.x;
+  const sy = evt.fromRow != null && evt.fromCol != null
+    ? clamp((evt.fromRow + 0.5) * TS - VH / 2, 0, worldH - VH)
+    : cam.y;
+  // Snap camera to the start position immediately before panning
+  if (evt.fromRow != null && evt.fromCol != null) { cam.x = sx; cam.y = sy; }
   camPan = {
-    startX: cam.x, startY: cam.y,
-    targetX: tx,   targetY: ty,
+    startX: sx, startY: sy,
+    targetX: tx, targetY: ty,
     duration: evt.duration ?? 2.0, elapsed: 0,
     doReturn: evt.return ?? true,
     phase: 'pan', onDone,
@@ -1436,7 +1838,7 @@ function updateCamPan(dt) {
     if (p.elapsed >= p.duration) {
       cam.x = p.targetX; cam.y = p.targetY;
       if (p.doReturn) { p.phase = 'hold'; p.elapsed = 0; }
-      else            { camPan = null; p.onDone?.(); }
+      else            { camPan = null; camFrozen = true; p.onDone?.(); }
     }
   } else if (p.phase === 'hold') {
     p.elapsed += dt;
@@ -1459,17 +1861,21 @@ function updateCamPan(dt) {
 
 // ── Trigger event queue ───────────────────────────────────
 function advanceTriggerQueue() {
-  if (!triggerQueue.length) return;
+  if (!triggerQueue.length) { camFrozen = false; return; } // release camera lock when done
   const evt = triggerQueue.shift();
   switch (evt.type) {
-    case 'dialog':
+    case 'dialog': {
+      // Optional NPC speaker: look up by id first, fall back to stored name
+      const speaker = evt.npcId ? npcs.find(n => n._npcId === evt.npcId) : null;
       activeDialog = {
-        lines: evt.lines?.length ? evt.lines : ['…'],
-        index: 0,
-        npcName: '',
-        onClose: advanceTriggerQueue,
+        lines:      evt.lines?.length ? evt.lines : ['…'],
+        index:      0,
+        npcName:    speaker?.name ?? evt.npcName ?? '',
+        portrait:   speaker?.portraitImg ?? null,
+        onClose:    advanceTriggerQueue,
       };
       break;
+    }
     case 'tileChange':
       (evt.changes || []).forEach(ch => {
         if (visualMap[ch.row]?.[ch.col] !== undefined) {
@@ -1484,6 +1890,19 @@ function advanceTriggerQueue() {
       break;
     case 'cameraPan':
       startCamPan(evt, advanceTriggerQueue);
+      break;
+    case 'setTimeOfDay':
+      if (evt.gameMinutes != null) gameTime = Math.max(0, Math.min(1439, evt.gameMinutes));
+      advanceTriggerQueue(); // instant — continue immediately
+      break;
+    case 'transitionToMap':
+      if (evt.toMapId && worldData?.maps?.find(m => m.id === evt.toMapId)) {
+        triggerQueue = []; // discard remaining events — new map takes over
+        camFrozen = false; camPan = null; // release any camera locks
+        triggerMapTransition(evt.toMapId, evt.toRow ?? undefined, evt.toCol ?? undefined);
+      } else {
+        advanceTriggerQueue(); // no valid target — skip
+      }
       break;
     default:
       advanceTriggerQueue();
@@ -1572,11 +1991,50 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
     : Array.from({length: MAP_ROWS}, () => new Array(MAP_COLS).fill(-1));
   worldTileCache.clear(); // flush per-tile canvas cache on map change
 
-  // Move player: prefer explicit entry coords, then map's saved spawn, then center
-  const useRow = spawnRow !== undefined ? spawnRow : (m.spawn?.row ?? Math.floor(MAP_ROWS/2));
-  const useCol = spawnCol !== undefined ? spawnCol : (m.spawn?.col ?? Math.floor(MAP_COLS/2));
-  player.x = (useCol + 0.5) * TS;
-  player.y = (useRow + 0.5) * TS;
+  // Remove the ghost sprite tile painted at each NPC's position by the editor.
+  // The editor paints the NPC's sprite onto tileMap when placing an NPC — on load
+  // that tile renders as a static background ghost while the live NPC entity moves.
+  // Rule: always clear a non-passable tile at an NPC's cell (it must be the ghost).
+  //       Also clear an exact tileId match even if the tile is classified as passable.
+  //       Leave purely passable tiles (grass/path/floor) that don't match the NPC sprite.
+  // Note: the n.tileId >= 0 guard is intentionally omitted — we clear by position
+  //       regardless of whether tileId is known, as long as the tile is impassable.
+  // Collect all NPC sprite tile IDs from this map's NPC list.
+  // Then scan the ENTIRE visualMap and erase every cell that uses one of those IDs.
+  // A character sprite should never appear as a static background tile — if it does,
+  // it's a ghost left behind from the editor (e.g. NPC was moved after initial placement).
+  const _npcTileIds = new Set();
+  for (const n of (m.npcs ?? [])) {
+    if (n.tileId >= 0) _npcTileIds.add(n.tileId);
+  }
+  if (_npcTileIds.size) {
+    for (let _r = 0; _r < MAP_ROWS; _r++) {
+      for (let _c = 0; _c < MAP_COLS; _c++) {
+        const _mt = visualMap[_r][_c];
+        if (_mt >= 0 && _npcTileIds.has(_mt)) {
+          console.log(`[GHOST CLEAR base] tile ${_mt} at (${_r},${_c}) is an NPC sprite → cleared`);
+          visualMap[_r][_c] = -1;
+        }
+        const _ot = visualOverlay?.[_r]?.[_c] ?? -1;
+        if (_ot >= 0 && _npcTileIds.has(_ot)) {
+          console.log(`[GHOST CLEAR overlay] tile ${_ot} at (${_r},${_c}) is an NPC sprite → cleared`);
+          visualOverlay[_r][_c] = -1;
+        }
+      }
+    }
+  }
+
+  // Move player only when a position is explicitly known
+  if (spawnRow !== undefined && spawnCol !== undefined) {
+    player.x = (spawnCol + 0.5) * TS;
+    player.y = (spawnRow + 0.5) * TS;
+    player.spawned = true;
+  } else if (m.spawn != null) {
+    player.x = (m.spawn.col + 0.5) * TS;
+    player.y = (m.spawn.row + 0.5) * TS;
+    player.spawned = true;
+  }
+  // else: no spawn defined — player stays hidden/where they are
   player.vx = 0; player.vy = 0;
 
   // Clear entities; load NPCs and triggers from world map data
@@ -1584,12 +2042,34 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
   // Scan every map for NPCs that belong on this map right now (schedule-aware).
   // An NPC with no schedule always appears on its home map.
   // An NPC with a schedule appears wherever its current slot points.
+  // Dual dedup: by unique NPC id AND by exact grid position.
+  // Position dedup catches accidentally double-placed NPCs (each gets a unique
+  // auto-id from the editor, so id-only dedup misses them).
   npcs = [];
+  const _seenNpcIds  = new Set();
+  const _seenNpcPos  = new Set();
   for (const wm of (worldData?.maps ?? [])) {
     for (const n of (wm.npcs ?? [])) {
-      const slot       = n.schedule?.length ? getScheduleSlot(n, gameTime) : null;
-      const targetMap  = slot ? slot.mapId : wm.id;
+      const slot      = n.schedule?.length ? getScheduleSlot(n, gameTime) : null;
+      const targetMap = slot ? slot.mapId : wm.id;
       if (targetMap !== mapId) continue;
+      const npcId    = n.id ?? (n.name + '@' + wm.id);
+      // posKey uses the actual spawn position on the CURRENT map (slot overrides home)
+      // so two NPCs from different source maps that land on the same tile are merged.
+      const spawnRow = slot?.row ?? n.row;
+      const spawnCol = slot?.col ?? n.col;
+      const posKey   = `${spawnRow},${spawnCol}`;
+      if (_seenNpcIds.has(npcId)) {
+        console.log(`[NPC LOAD SKIPPED] "${n.name}" (${npcId}) duplicate id`);
+        continue;
+      }
+      if (_seenNpcPos.has(posKey)) {
+        console.log(`[NPC LOAD SKIPPED] "${n.name}" (${npcId}) posKey=${posKey} already occupied`);
+        continue;
+      }
+      _seenNpcIds.add(npcId);
+      _seenNpcPos.add(posKey);
+      console.log(`[NPC LOAD] "${n.name}" (${npcId}) → (${spawnRow},${spawnCol}) patrol=${n.patrol?.type ?? 'none'} schedule=${!!slot}`);
       npcs.push(buildNpcInstance(n, wm.id, slot));
     }
   }
@@ -1597,21 +2077,61 @@ function activateWorldMap(mapId, spawnRow, spawnCol) {
   if (!worldData && m.npcs?.length) {
     npcs = m.npcs.map(n => buildNpcInstance(n, mapId, null));
   }
+  console.log(`[NPC ARRAY] ${npcs.length} NPC(s) on map "${mapId}":`,
+    npcs.map(n => `"${n.name}" id=${n._npcId} pos=(${(n.y/TS).toFixed(1)}r,${(n.x/TS).toFixed(1)}c) patrol=${n.patrol?.type}`));
   triggers = (m.triggers || []).map(t => ({ ...t }));
   firedTriggers = new Set(); // reset one-shot tracking on every map load
+
+  // Start background music for this map (fades out the old track, shuffles & plays new ones)
+  startBgm(m.music ?? []);
+
+  // Fire all map-load triggers — collect all their events into one queue
+  const loadTriggers = triggers.filter(t => t.activation === 'mapload');
+
+  // Pre-snap the camera to the first cameraPan's FROM position so the player
+  // sees the correct starting frame during the fade-in instead of (0,0).
+  const _allLoadEvts = loadTriggers.flatMap(t =>
+    t.events?.length ? t.events : [{ type: 'dialog' }]);
+  const _firstPan = _allLoadEvts.find(e => e.type === 'cameraPan');
+  if (_firstPan?.fromRow != null && _firstPan?.fromCol != null) {
+    const _wW = MAP_COLS * TS, _wH = MAP_ROWS * TS;
+    cam.x = clamp((_firstPan.fromCol + 0.5) * TS - VW / 2, 0, _wW - VW);
+    cam.y = clamp((_firstPan.fromRow + 0.5) * TS - VH / 2, 0, _wH - VH);
+  } else {
+    // Snap to player spawn or top-left if no player
+    cam.x = clamp(player.x - VW / 2, 0, MAP_COLS * TS - VW);
+    cam.y = clamp(player.y - VH / 2, 0, MAP_ROWS * TS - VH);
+  }
+
+  if (loadTriggers.length) {
+    // Small delay so the map fade-in completes before dialogs appear
+    setTimeout(() => {
+      const allEvts = [];
+      for (const t of loadTriggers) {
+        if (t.oneShot && firedTriggers.has(t.id)) continue;
+        if (t.oneShot) firedTriggers.add(t.id);
+        const evts = t.events?.length
+          ? t.events.map(e => ({ ...e }))
+          : [{ type: 'dialog', lines: t.lines ?? ['…'] }];
+        allEvts.push(...evts);
+      }
+      if (allEvts.length) { triggerQueue = allEvts; advanceTriggerQueue(); }
+    }, 300);
+  }
   victoryDone = true; // no victory condition without enemies
 
   // Load map items (respawn fresh each visit)
-  mapItems = (m.items || []).map(it => ({
-    ...it,
-    x: (it.col + 0.5) * TS,
-    y: (it.row + 0.5) * TS,
-    collected: false,
-  }));
-
-  // Snap camera immediately
-  cam.x = clamp(player.x - VW/2, 0, MAP_COLS*TS - VW);
-  cam.y = clamp(player.y - VH/2, 0, MAP_ROWS*TS - VH);
+  // If an item references a template, merge template fields as defaults
+  mapItems = (m.items || []).map(it => {
+    const tmpl = worldData?.itemTemplates?.find(t => t.id === it.templateId) ?? null;
+    return {
+      ...(tmpl ?? {}),   // template defaults (name, tileId, description, pickup)
+      ...it,             // instance overrides (row, col, id, plus any manual overrides)
+      x: (it.col + 0.5) * TS,
+      y: (it.row + 0.5) * TS,
+      collected: false,
+    };
+  });
 }
 
 function triggerMapTransition(toMapId, toRow, toCol) {
@@ -1655,6 +2175,7 @@ function loadWorldFile() {
     reader.onload = ev => {
       try {
         applyWorldData(JSON.parse(ev.target.result));
+        _bgmUnlock(); // file-picker click = user gesture → allow audio
         console.log('World loaded:', worldData.maps.length, 'maps');
       } catch(err) { alert('World load error: ' + err.message); }
     };
@@ -1672,6 +2193,7 @@ let gameStarted=false, victoryDone=false;
 function startGame() {
   if (gameStarted) return;
   gameStarted=true; overlay.style.display='none';
+  _bgmUnlock(); // first real interaction — release queued BGM
   requestAnimationFrame(gameLoop);
 }
 function showDeathScreen() {
@@ -1725,10 +2247,10 @@ function gameLoop(ts) {
     }
   }
 
-  // ── Camera: pan takes priority, otherwise follow player ──────────────────
+  // ── Camera: pan takes priority, frozen holds position, otherwise follow player
   const worldW = MAP_COLS * TS;
   const worldH = MAP_ROWS * TS;
-  if (!updateCamPan(dt)) {
+  if (!updateCamPan(dt) && !camFrozen && player.spawned) {
     const targetCamX = clamp(player.x - VW/2, 0, worldW - VW);
     const targetCamY = clamp(player.y - VH/2, 0, worldH - VH);
     cam.x += (targetCamX - cam.x) * Math.min(1, dt * 8);
@@ -1779,7 +2301,7 @@ function gameLoop(ts) {
   const pAnim  = player.dead           ? 'death'  :
                  player.hurtTimer > 0  ? 'hurt'   :
                  moving                ? 'walk'   : 'idle';
-  if (!player.dead) {
+  if (player.spawned && !player.dead) {
     ctx.globalAlpha = player.invincTimer>0 ? 0.4+0.6*Math.abs(Math.sin(player.invincTimer*22)) : 1;
     drawKnight(player.x,player.y,player.facingRight,pAnim);
     ctx.globalAlpha=1;
@@ -1790,6 +2312,7 @@ function gameLoop(ts) {
   drawDayNight();
   drawDialog();
   drawInventory();
+  drawCrafting();
   drawHUD();
 
   // ── Map transition black overlay ──────────────────────────────────────────
@@ -1810,19 +2333,24 @@ function gameLoop(ts) {
 // ════════════════════════════════════════════════════════════════════════════
 gameMap = buildMap();
 
-// ── Preview mode: auto-load world from editor and jump straight into game ──
+// ── Preview mode: receive world data from editor via BroadcastChannel ────────
+// The editor opens this page then sends the world over BroadcastChannel (no
+// size limit — handles large audio dataUrls that would overflow localStorage).
 (function checkPreview() {
-  try {
-    const raw = localStorage.getItem('preview_world');
-    if (!raw) return;
-    localStorage.removeItem('preview_world'); // consume once
-    const data = JSON.parse(raw);
-    applyWorldData(data);
-    // Hide the title overlay and start immediately
-    document.getElementById('overlay').style.display = 'none';
-    gameStarted = true;
-    requestAnimationFrame(gameLoop);
-  } catch(e) { console.warn('Preview load failed:', e); }
+  const ch = new BroadcastChannel('game_preview');
+  ch.onmessage = ev => {
+    if (ev.data?.type !== 'world') return;
+    ch.close();
+    try {
+      applyWorldData(ev.data.data);
+      document.getElementById('overlay').style.display = 'none';
+      gameStarted = true;
+      _bgmUnlock(); // editor click = user gesture → audio allowed immediately
+      requestAnimationFrame(gameLoop);
+    } catch(e) { console.warn('Preview load failed:', e); }
+  };
+  // Signal the editor that this page is ready to receive
+  ch.postMessage('ready');
 })();
 </script>
 </body>
