@@ -498,15 +498,17 @@ select.type-sel {
       <div class="stab active" id="tab-palette" onclick="switchTab('palette')">Tiles</div>
       <div class="stab" id="tab-npcs"    onclick="switchTab('npcs')">NPCs</div>
       <div class="stab" id="tab-items"   onclick="switchTab('items')">Items</div>
+      <div class="stab" id="tab-objects" onclick="switchTab('objects')">Objects</div>
       <div class="stab" id="tab-assets"  onclick="switchTab('assets')">Assets</div>
     </div>
 
     <div id="palette-scroll">
       <canvas id="palette-canvas"></canvas>
       <div id="maps-panel"></div>
-      <div id="npcs-panel"   style="display:none;padding:8px;"></div>
-      <div id="items-panel"  style="display:none;padding:8px;"></div>
-      <div id="assets-panel" style="display:none;padding:8px;"></div>
+      <div id="npcs-panel"    style="display:none;padding:8px;"></div>
+      <div id="items-panel"   style="display:none;padding:8px;"></div>
+      <div id="objects-panel" style="display:none;padding:8px;"></div>
+      <div id="assets-panel"  style="display:none;padding:8px;"></div>
     </div>
 
     <div id="tile-info">
@@ -734,9 +736,11 @@ let assets = { tileset: null, tileset2: null };
 
 // ── NPC Templates ─────────────────────────────────────────
 // Each: { id, displayName, tileId, portrait: {name, dataUrl}|null }
-let npcTemplates  = [];
-let itemTemplates = [];
-let recipes       = [];
+let npcTemplates     = [];
+let itemTemplates    = [];
+let recipes          = [];
+let objectTemplates  = [];   // [{ id, name, rows, cols, tiles[][], overlay[][] }]
+let selectedObjectId = null; // id of object currently loaded in stamp tool
 
 const ASSET_SLOTS = [
   { key: 'tileset',  label: 'Tileset 1', hint: 'Primary packed 16×16 tilemap sheet — tiles 0 … N₁−1' },
@@ -3202,15 +3206,41 @@ function renderMap() {
       hoverCell.r < MAP_ROWS && hoverCell.c < MAP_COLS) {
     const hx = Math.round(hoverCell.c * ts - camX);
     const hy = Math.round(hoverCell.r * ts - camY);
-    const hoverColor = altEyedropper       ? 'rgba(255,200,50,0.9)'
-                     : tool === 'erase'  ? 'rgba(255,80,80,0.75)'
-                     : tool === 'exit'   ? 'rgba(50,220,100,0.85)'
-                     : tool === 'spawn'  ? 'rgba(255,215,60,0.9)'
-                     : 'rgba(255,255,255,0.55)';
-    mapCtx.strokeStyle = hoverColor;
-    mapCtx.lineWidth = 1.5;
-    const sz = tool === 'erase' ? eraserSize : 1;
-    mapCtx.strokeRect(hx+0.5, hy+0.5, ts*sz-1, ts*sz-1);
+
+    if (tool === 'object' && selectedObjectId) {
+      // Draw a ghost preview of every tile in the object footprint
+      const obj = objectTemplates.find(o => o.id === selectedObjectId);
+      if (obj) {
+        mapCtx.save();
+        mapCtx.globalAlpha = 0.55;
+        for (let dr = 0; dr < obj.rows; dr++) {
+          for (let dc = 0; dc < obj.cols; dc++) {
+            const tid = obj.tiles[dr]?.[dc] ?? -1;
+            const oid = obj.overlay[dr]?.[dc] ?? -1;
+            const cx = Math.round((hoverCell.c + dc) * ts - camX);
+            const cy = Math.round((hoverCell.r + dr) * ts - camY);
+            if (tid >= 0) drawTile(mapCtx, tid, cx, cy, ts);
+            if (oid >= 0) drawTile(mapCtx, oid, cx, cy, ts);
+          }
+        }
+        mapCtx.globalAlpha = 1;
+        // Bounding-box outline
+        mapCtx.strokeStyle = 'rgba(180,255,180,0.9)';
+        mapCtx.lineWidth = 1.5;
+        mapCtx.strokeRect(hx + 0.5, hy + 0.5, ts * obj.cols - 1, ts * obj.rows - 1);
+        mapCtx.restore();
+      }
+    } else {
+      const hoverColor = altEyedropper      ? 'rgba(255,200,50,0.9)'
+                       : tool === 'erase'  ? 'rgba(255,80,80,0.75)'
+                       : tool === 'exit'   ? 'rgba(50,220,100,0.85)'
+                       : tool === 'spawn'  ? 'rgba(255,215,60,0.9)'
+                       : 'rgba(255,255,255,0.55)';
+      mapCtx.strokeStyle = hoverColor;
+      mapCtx.lineWidth = 1.5;
+      const sz = tool === 'erase' ? eraserSize : 1;
+      mapCtx.strokeRect(hx + 0.5, hy + 0.5, ts * sz - 1, ts * sz - 1);
+    }
   }
 
   // Minimap
@@ -3405,7 +3435,7 @@ function setTool(t) {
   tool = t;
   // Leaving paint tool clears the Alt eyedropper override
   if (t !== 'paint') altEyedropper = false;
-  ['paint','erase','fill','pick','select','exit','spawn','npc','item','trigger'].forEach(n =>
+  ['paint','erase','fill','pick','select','exit','spawn','npc','item','trigger','object'].forEach(n =>
     document.getElementById('btn-'+n)?.classList.toggle('active', n === t)
   );
   // Show eraser size buttons only when eraser is active
@@ -4021,6 +4051,317 @@ function renderItemsPanel() {
   }
 }
 
+// ── Objects Panel ─────────────────────────────────────────
+function renderObjectsPanel() {
+  const panel = document.getElementById('objects-panel');
+  panel.innerHTML = '';
+
+  // Header
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+  const title = document.createElement('span');
+  title.style.cssText = 'flex:1;color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;';
+  title.textContent = 'Object Templates';
+  const newBtn = document.createElement('button');
+  newBtn.className = 'tbtn import-btn'; newBtn.textContent = '+ New Object'; newBtn.style.fontSize = '10px';
+  newBtn.onclick = () => openObjectModal(null);
+  hdr.append(title, newBtn);
+  panel.appendChild(hdr);
+
+  // Active stamp indicator
+  if (tool === 'object' && selectedObjectId) {
+    const activeBar = document.createElement('div');
+    activeBar.style.cssText = 'background:#1a3a1a;border:1px solid #2a6a2a;color:#6c6;font-size:10px;padding:4px 8px;margin-bottom:8px;border-radius:3px;';
+    const obj = objectTemplates.find(o => o.id === selectedObjectId);
+    activeBar.textContent = `✦ Placing: ${obj?.name ?? '?'} — click map to stamp, Esc to cancel`;
+    panel.appendChild(activeBar);
+  }
+
+  if (!objectTemplates.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'color:#3a3a3a;font-size:10px;text-align:center;padding:14px 8px;line-height:1.7;';
+    empty.textContent = 'No objects yet.\nCreate one to build multi-tile stamps.';
+    panel.appendChild(empty);
+    return;
+  }
+
+  objectTemplates.forEach(obj => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 6px;margin-bottom:5px;background:#1e1e1e;border:1px solid #2a2a2a;border-radius:3px;';
+    if (selectedObjectId === obj.id && tool === 'object')
+      row.style.borderColor = '#2a6a2a';
+
+    // Mini thumbnail (first row of base tiles)
+    const thumb = document.createElement('canvas');
+    const TSIZE = 14;
+    thumb.width  = obj.cols * TSIZE;
+    thumb.height = obj.rows * TSIZE;
+    thumb.style.cssText = `width:${obj.cols*TSIZE}px;height:${obj.rows*TSIZE}px;flex-shrink:0;border:1px solid #333;image-rendering:pixelated;background:#111;`;
+    const tc = thumb.getContext('2d');
+    for (let dr = 0; dr < obj.rows; dr++) {
+      for (let dc = 0; dc < obj.cols; dc++) {
+        const tid = obj.tiles[dr]?.[dc] ?? -1;
+        const oid = obj.overlay[dr]?.[dc] ?? -1;
+        if (tid >= 0) drawTile(tc, tid, dc * TSIZE, dr * TSIZE, TSIZE);
+        if (oid >= 0) drawTile(tc, oid, dc * TSIZE, dr * TSIZE, TSIZE);
+      }
+    }
+    row.appendChild(thumb);
+
+    // Info
+    const info = document.createElement('div'); info.style.cssText = 'flex:1;min-width:0;';
+    const nameEl = document.createElement('div');
+    nameEl.style.cssText = 'color:#c8a;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    nameEl.textContent = obj.name;
+    const dimEl = document.createElement('div');
+    dimEl.style.cssText = 'color:#444;font-size:10px;';
+    dimEl.textContent = `${obj.rows} × ${obj.cols} tiles`;
+    info.append(nameEl, dimEl);
+
+    // Place button
+    const placeBtn = document.createElement('button');
+    placeBtn.className = 'tbtn' + (selectedObjectId === obj.id && tool === 'object' ? ' active' : '');
+    placeBtn.textContent = '⬛'; placeBtn.title = 'Stamp on map';
+    placeBtn.style.cssText = 'font-size:12px;color:#6c6;border-color:#2a5a2a;';
+    placeBtn.onclick = () => {
+      selectedObjectId = obj.id;
+      setTool('object');
+      renderObjectsPanel();
+      toast(`Placing "${obj.name}" — click the map to stamp`);
+    };
+
+    // Edit button
+    const editBtn = document.createElement('button');
+    editBtn.className = 'tbtn mibtn'; editBtn.textContent = '✏'; editBtn.title = 'Edit object';
+    editBtn.onclick = () => openObjectModal(obj.id);
+
+    // Delete button
+    const delBtn = document.createElement('button');
+    delBtn.className = 'tbtn mibtn danger'; delBtn.textContent = '✕'; delBtn.title = 'Delete';
+    delBtn.onclick = () => {
+      objectTemplates = objectTemplates.filter(o => o.id !== obj.id);
+      if (selectedObjectId === obj.id) { selectedObjectId = null; setTool('paint'); }
+      renderObjectsPanel();
+    };
+
+    row.append(info, placeBtn, editBtn, delBtn);
+    panel.appendChild(row);
+  });
+}
+
+// ── Object Modal (create / edit) ────────────────────────────
+function openObjectModal(objId) {
+  const existing = objId ? objectTemplates.find(o => o.id === objId) : null;
+  let rows = existing?.rows ?? 3;
+  let cols = existing?.cols ?? 3;
+  // Deep-copy grids so we can cancel without side-effects
+  let baseTiles    = existing ? existing.tiles.map(r => [...r])    : makeGrid(rows, cols, -1);
+  let overlayTiles = existing ? existing.overlay.map(r => [...r])  : makeGrid(rows, cols, -1);
+  let activeLayer  = 'base'; // 'base' or 'overlay'
+
+  function makeGrid(r, c, fill) {
+    return Array.from({ length: r }, () => new Array(c).fill(fill));
+  }
+  function resizeGrids(nr, nc) {
+    const nb = makeGrid(nr, nc, -1), no = makeGrid(nr, nc, -1);
+    for (let r = 0; r < Math.min(rows, nr); r++)
+      for (let c = 0; c < Math.min(cols, nc); c++) {
+        nb[r][c] = baseTiles[r]?.[c] ?? -1;
+        no[r][c] = overlayTiles[r]?.[c] ?? -1;
+      }
+    rows = nr; cols = nc;
+    baseTiles = nb; overlayTiles = no;
+    rebuildGrid();
+  }
+
+  const ov  = document.createElement('div'); ov.className = 'overlay';
+  const box = document.createElement('div'); box.className = 'modal';
+  box.style.cssText = 'min-width:480px;max-width:92vw;';
+
+  const h3 = document.createElement('h3');
+  h3.style.color = '#c8a';
+  h3.textContent = existing ? `Edit Object: ${existing.name}` : 'New Object';
+
+  // Name
+  const nameRow = document.createElement('div');
+  nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
+  const nameLbl = document.createElement('label');
+  nameLbl.textContent = 'Name:'; nameLbl.style.cssText = 'color:#888;min-width:60px;';
+  const nameInp = document.createElement('input');
+  nameInp.type = 'text'; nameInp.value = existing?.name ?? 'New Object';
+  nameInp.style.cssText = 'flex:1;background:#111;color:#c8a;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
+  nameRow.append(nameLbl, nameInp);
+
+  // Dimensions
+  const dimRow = document.createElement('div');
+  dimRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
+  function dimInp(label, val, onChange) {
+    const w = document.createElement('div'); w.style.cssText = 'display:flex;align-items:center;gap:4px;';
+    const l = document.createElement('span'); l.textContent = label; l.style.cssText = 'color:#888;font-size:11px;';
+    const inp = document.createElement('input'); inp.type = 'number'; inp.min = 1; inp.max = 16; inp.value = val;
+    inp.style.cssText = 'width:44px;background:#111;color:#9db;border:1px solid #2a2a2a;padding:2px 4px;font-family:inherit;font-size:11px;';
+    inp.addEventListener('change', () => onChange(Math.max(1, Math.min(16, parseInt(inp.value) || 1))));
+    w.append(l, inp); return w;
+  }
+  const dimSep = document.createElement('span'); dimSep.textContent = '×'; dimSep.style.color = '#555';
+  dimRow.append(
+    dimInp('Rows', rows, v => resizeGrids(v, cols)),
+    dimSep,
+    dimInp('Cols', cols, v => resizeGrids(rows, v))
+  );
+
+  // Layer toggle
+  const layerRow = document.createElement('div');
+  layerRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;align-items:center;';
+  const layerLbl = document.createElement('span'); layerLbl.textContent = 'Layer:'; layerLbl.style.cssText = 'color:#888;font-size:11px;';
+  const baseBtn = document.createElement('button'); baseBtn.className = 'tbtn active'; baseBtn.textContent = 'Base'; baseBtn.style.fontSize = '10px';
+  const ovBtn   = document.createElement('button'); ovBtn.className   = 'tbtn';        ovBtn.textContent   = 'Overlay'; ovBtn.style.fontSize = '10px';
+  baseBtn.onclick = () => { activeLayer = 'base'; baseBtn.classList.add('active'); ovBtn.classList.remove('active'); rebuildGrid(); };
+  ovBtn.onclick   = () => { activeLayer = 'overlay'; ovBtn.classList.add('active'); baseBtn.classList.remove('active'); rebuildGrid(); };
+  const clearBtn = document.createElement('button'); clearBtn.className = 'tbtn danger'; clearBtn.textContent = 'Clear layer'; clearBtn.style.cssText = 'font-size:10px;margin-left:auto;';
+  clearBtn.onclick = () => {
+    if (activeLayer === 'base') baseTiles = makeGrid(rows, cols, -1);
+    else overlayTiles = makeGrid(rows, cols, -1);
+    rebuildGrid();
+  };
+  layerRow.append(layerLbl, baseBtn, ovBtn, clearBtn);
+
+  // Hint
+  const hint = document.createElement('div');
+  hint.style.cssText = 'color:#444;font-size:10px;margin-bottom:6px;';
+  hint.textContent = 'Left-click: paint selected palette tile  ·  Right-click: erase cell';
+
+  // Grid canvas
+  const CELL = 36;
+  const gridCanvas = document.createElement('canvas');
+  gridCanvas.style.cssText = 'display:block;border:1px solid #2a2a2a;image-rendering:pixelated;cursor:crosshair;';
+  const gc = gridCanvas.getContext('2d');
+
+  function rebuildGrid() {
+    gridCanvas.width  = cols * CELL;
+    gridCanvas.height = rows * CELL;
+    gc.imageSmoothingEnabled = false;
+    gc.clearRect(0, 0, gridCanvas.width, gridCanvas.height);
+    // Background
+    gc.fillStyle = '#0a0a0a';
+    gc.fillRect(0, 0, gridCanvas.width, gridCanvas.height);
+    // Always draw base tiles first, then overlay on top (so user can see both)
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const bId = baseTiles[r]?.[c] ?? -1;
+        const oId = overlayTiles[r]?.[c] ?? -1;
+        if (bId >= 0) drawTile(gc, bId, c * CELL, r * CELL, CELL);
+        if (oId >= 0) drawTile(gc, oId, c * CELL, r * CELL, CELL);
+        // Grid lines
+        gc.strokeStyle = '#1e1e1e';
+        gc.lineWidth = 1;
+        gc.strokeRect(c * CELL + 0.5, r * CELL + 0.5, CELL - 1, CELL - 1);
+        // Active layer empty cell indicator
+        const grid = activeLayer === 'base' ? baseTiles : overlayTiles;
+        if ((grid[r]?.[c] ?? -1) < 0) {
+          gc.fillStyle = activeLayer === 'base' ? 'rgba(255,255,255,0.03)' : 'rgba(100,180,255,0.05)';
+          gc.fillRect(c * CELL + 1, r * CELL + 1, CELL - 2, CELL - 2);
+        }
+      }
+    }
+    // Active layer label
+    gc.fillStyle = activeLayer === 'overlay' ? 'rgba(100,180,255,0.15)' : 'transparent';
+    gc.fillRect(0, 0, gridCanvas.width, gridCanvas.height);
+  }
+
+  function cellFromEvent(e) {
+    const rect = gridCanvas.getBoundingClientRect();
+    const scaleX = gridCanvas.width  / rect.width;
+    const scaleY = gridCanvas.height / rect.height;
+    return {
+      r: Math.floor((e.clientY - rect.top)  * scaleY / CELL),
+      c: Math.floor((e.clientX - rect.left) * scaleX / CELL),
+    };
+  }
+
+  let isPaintingGrid = false;
+  let gridErasing = false;
+  gridCanvas.addEventListener('mousedown', e => {
+    e.preventDefault();
+    isPaintingGrid = true;
+    gridErasing = e.button === 2;
+    const { r, c } = cellFromEvent(e);
+    if (r < 0 || r >= rows || c < 0 || c >= cols) return;
+    const grid = activeLayer === 'base' ? baseTiles : overlayTiles;
+    grid[r][c] = gridErasing ? -1 : selTile;
+    rebuildGrid();
+  });
+  gridCanvas.addEventListener('mousemove', e => {
+    if (!isPaintingGrid) return;
+    const { r, c } = cellFromEvent(e);
+    if (r < 0 || r >= rows || c < 0 || c >= cols) return;
+    const grid = activeLayer === 'base' ? baseTiles : overlayTiles;
+    grid[r][c] = gridErasing ? -1 : selTile;
+    rebuildGrid();
+  });
+  gridCanvas.addEventListener('mouseup',    () => { isPaintingGrid = false; });
+  gridCanvas.addEventListener('mouseleave', () => { isPaintingGrid = false; });
+  gridCanvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  rebuildGrid();
+
+  // Buttons
+  const btns = document.createElement('div'); btns.className = 'modal-btns';
+  if (existing) {
+    const delBtn = makeBtn('Delete', '#3a1515', '#7a2525', () => {
+      objectTemplates = objectTemplates.filter(o => o.id !== objId);
+      if (selectedObjectId === objId) { selectedObjectId = null; setTool('paint'); }
+      ov.remove(); renderObjectsPanel();
+      toast(`Object "${existing.name}" deleted`);
+    });
+    delBtn.style.marginRight = 'auto';
+    btns.appendChild(delBtn);
+  }
+  btns.append(
+    makeBtn('Cancel', '#2a2a2a', '#444', () => ov.remove()),
+    makeBtn(existing ? 'Save' : 'Create', '#2a3a1a', '#5a8a3a', () => {
+      const name = nameInp.value.trim() || 'Object';
+      if (existing) {
+        Object.assign(existing, { name, rows, cols, tiles: baseTiles, overlay: overlayTiles });
+      } else {
+        objectTemplates.push({ id: 'obj_' + genMapId(), name, rows, cols, tiles: baseTiles, overlay: overlayTiles });
+      }
+      ov.remove(); renderObjectsPanel();
+      toast(`Object "${name}" ${existing ? 'saved' : 'created'}`);
+    })
+  );
+
+  box.append(h3, nameRow, dimRow, layerRow, hint, gridCanvas, btns);
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+  ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
+  nameInp.focus(); nameInp.select();
+}
+
+// ── Stamp an object onto the current map ────────────────────
+function stampObject(obj, originRow, originCol) {
+  const cur = worldMaps.find(m => m.id === currentMapId);
+  if (!cur) return;
+  const ops = [];
+  for (let dr = 0; dr < obj.rows; dr++) {
+    for (let dc = 0; dc < obj.cols; dc++) {
+      const r = originRow + dr, c = originCol + dc;
+      if (r < 0 || r >= MAP_ROWS || c < 0 || c >= MAP_COLS) continue;
+      const bId = obj.tiles[dr]?.[dc] ?? -1;
+      const oId = obj.overlay[dr]?.[dc] ?? -1;
+      if (bId >= 0) {
+        ops.push({ r, c, old: tileMap[r][c], nw: bId, layer: 'base' });
+        tileMap[r][c] = bId;
+      }
+      if (oId >= 0) {
+        ops.push({ r, c, old: overlayMap[r][c], nw: oId, layer: 'overlay' });
+        overlayMap[r][c] = oId;
+      }
+    }
+  }
+  if (ops.length) { pushUndo(ops); markMinimapDirty(); renderMap(); }
+}
+
 // ── Assets Panel ──────────────────────────────────────────
 function renderAssetsPanel() {
   const panel = document.getElementById('assets-panel');
@@ -4288,20 +4629,20 @@ function closeMapsPopup() {
 
 function switchTab(tab) {
   if (tab === 'editor') { openTileEditorPopup(); return; }
-  if (tab === 'maps')   { return; } // maps always visible in the left sidebar
-  const tabs    = ['palette','npcs','items','assets'];
-  const panels  = { palette:'palette-canvas', npcs:'npcs-panel', items:'items-panel', assets:'assets-panel' };
+  if (tab === 'maps')   { return; }
+  const tabs = ['palette','npcs','items','objects','assets'];
   tabs.forEach(t => {
     document.getElementById('tab-' + t).classList.toggle('active', t === tab);
   });
-  // Show/hide panels (palette-canvas is the canvas; others are divs)
-  document.getElementById('palette-canvas').style.display = tab === 'palette' ? 'block' : 'none';
-  document.getElementById('npcs-panel'    ).style.display = tab === 'npcs'    ? 'block' : 'none';
-  document.getElementById('items-panel'   ).style.display = tab === 'items'   ? 'block' : 'none';
-  document.getElementById('assets-panel'  ).style.display = tab === 'assets'  ? 'block' : 'none';
-  if (tab === 'npcs')   renderNpcsPanel();
-  if (tab === 'items')  renderItemsPanel();
-  if (tab === 'assets') renderAssetsPanel();
+  document.getElementById('palette-canvas' ).style.display = tab === 'palette' ? 'block' : 'none';
+  document.getElementById('npcs-panel'     ).style.display = tab === 'npcs'    ? 'block' : 'none';
+  document.getElementById('items-panel'    ).style.display = tab === 'items'   ? 'block' : 'none';
+  document.getElementById('objects-panel'  ).style.display = tab === 'objects' ? 'block' : 'none';
+  document.getElementById('assets-panel'   ).style.display = tab === 'assets'  ? 'block' : 'none';
+  if (tab === 'npcs')    renderNpcsPanel();
+  if (tab === 'items')   renderItemsPanel();
+  if (tab === 'objects') renderObjectsPanel();
+  if (tab === 'assets')  renderAssetsPanel();
 }
 
 // ── Export ─────────────────────────────────────────────────
@@ -4382,6 +4723,7 @@ function saveFile() {
     assets,
     npcTemplates,
     itemTemplates,
+    objectTemplates,
     recipes,
   };
   const blob = new Blob([JSON.stringify(data)], { type:'application/json' });
@@ -4403,9 +4745,10 @@ function loadWorldData(data) {
   if (data.nextCustomTileId) nextCustomTileId = data.nextCustomTileId;
   if (data.customTiles)  deserializeCustomTiles(data.customTiles);
   assets = { tileset: null, tileset2: null, ...( data.assets || {} ) };
-  npcTemplates  = Array.isArray(data.npcTemplates)  ? [...data.npcTemplates]  : [];
-  itemTemplates = Array.isArray(data.itemTemplates) ? [...data.itemTemplates] : [];
-  recipes       = Array.isArray(data.recipes)       ? [...data.recipes]       : [];
+  npcTemplates    = Array.isArray(data.npcTemplates)    ? [...data.npcTemplates]    : [];
+  itemTemplates   = Array.isArray(data.itemTemplates)   ? [...data.itemTemplates]   : [];
+  objectTemplates = Array.isArray(data.objectTemplates) ? [...data.objectTemplates] : [];
+  recipes         = Array.isArray(data.recipes)         ? [...data.recipes]         : [];
 
   // Restore sheet counts before loading tilesets so sheet2 IDs are offset correctly
   if (data.sheet1TileCount) {
@@ -4741,6 +5084,11 @@ mapCanvas.addEventListener('mousedown', e => {
         const cur = worldMaps.find(m=>m.id===currentMapId);
         if(cur) { cur.spawn={row:r,col:c}; renderMap(); renderMapsList(); toast(`Spawn set → row ${r}, col ${c}`); }
       }
+    } else if(tool==='object') {
+      if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS && selectedObjectId) {
+        const obj = objectTemplates.find(o=>o.id===selectedObjectId);
+        if(obj) stampObject(obj, r, c);
+      }
     } else if(tool==='select') {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
         const cur = worldMaps.find(m=>m.id===currentMapId);
@@ -4983,6 +5331,9 @@ document.addEventListener('keydown', e => {
   const tag=document.activeElement?.tagName;
   if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
   // ESC exits waypoint pick mode
+  if (e.key === 'Escape' && tool === 'object') {
+    selectedObjectId = null; setTool('paint'); renderObjectsPanel(); return;
+  }
   if (e.key === 'Escape' && npcWaypointPickMode?.interactive) {
     document.getElementById('_wp-toolbar')?.remove();
     if (npcWaypointPickMode.modalOv) npcWaypointPickMode.modalOv.style.display = '';
