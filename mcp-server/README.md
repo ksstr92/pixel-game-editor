@@ -9,6 +9,22 @@ The server holds one world in memory per process and mirrors exactly the JSON sh
 `editor.html` saves/loads, so a file produced here opens directly in the editor and plays
 directly in `game.html`.
 
+### Important: this server and the browser editor do not share state
+
+This server's in-memory world and whatever's open in an `editor.html` browser tab are two
+**completely independent copies** — the only bridge between them is a `world.json` file on disk,
+moved across explicitly via `world_save`/`world_load` here and Save/Load in the browser. Building
+something in the editor does not make it visible to this server (or vice versa) until it's been
+saved on one side and loaded on the other. Losing track of which side has the latest changes —
+e.g. an object template captured by hand in the editor never getting into the file this server
+reads — is the most common cause of "my changes disappeared."
+
+To avoid that: pick one `world.json` path and use it consistently on both sides —
+`world_save`/`world_load` here with an explicit `filePath`, and in the editor, Save/Load once via
+its file picker (Chrome/Edge) to link that same file, after which its Save button overwrites it
+directly. If the editor's Save only offers a Downloads-folder download (older browsers without
+the File System Access API), move that downloaded file to the path this server uses, every time.
+
 ## Install
 
 ```bash

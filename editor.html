@@ -757,6 +757,15 @@ const ASSET_SLOTS = [
 // ── World / Multi-Map State ───────────────────────────────
 let worldMaps     = [];   // [{ id, name, cols, rows, tileMap }]
 let currentMapId  = null;
+
+// FileSystemFileHandle of the world.json currently linked to this session (Chrome/
+// Edge only — File System Access API). Once set, Save overwrites this exact file on
+// disk instead of downloading a new copy to the Downloads folder each time, so the
+// editor and an external tool (e.g. an MCP server) pointed at the same path always
+// see the same file. null on browsers without the API, or before any Load/Save.
+let fileHandle = null;
+const supportsFileHandles = typeof window.showSaveFilePicker === 'function'
+                          && typeof window.showOpenFilePicker === 'function';
 function genMapId() { return 'map_' + Math.random().toString(36).slice(2, 9); }
 
 // Temporary blob URLs for audio preview — keyed by filename, session-only (not saved to world JSON)
@@ -4789,9 +4798,9 @@ function importModal() {
 }
 
 // ── Save / Load file ───────────────────────────────────────
-function saveFile() {
+function buildWorldData() {
   flushCurrentMap();
-  const data = {
+  return {
     version: 3,
     currentMapId,
     maps: worldMaps,
@@ -4807,14 +4816,104 @@ function saveFile() {
     objectTemplates,
     recipes,
   };
-  const blob = new Blob([JSON.stringify(data)], { type:'application/json' });
+}
+
+function updateSaveButtonLabel() {
+  const btn = document.getElementById('btn-save');
+  if (!btn) return;
+  if (fileHandle) {
+    btn.textContent = `💾 Save (${fileHandle.name})`;
+    btn.title = `Overwrites ${fileHandle.name} directly. Shift-click to save as a different file.`;
+  } else {
+    btn.textContent = '💾 Save';
+    btn.title = supportsFileHandles
+      ? 'Pick a file to save to — subsequent saves overwrite it directly, no re-downloading.'
+      : 'Downloads world.json (this browser doesn\'t support saving directly to a chosen file).';
+  }
+}
+
+async function downloadAsFile(json) {
+  const blob = new Blob([json], { type:'application/json' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url; a.download = 'world.json'; a.click();
   URL.revokeObjectURL(url);
-  toast('Saved world.json (' + worldMaps.length + ' map' + (worldMaps.length > 1 ? 's' : '') + ')');
 }
-function loadFile() { document.getElementById('file-input').click(); }
+
+// Saves in place to the linked file (same file every time — the point of this is
+// so an external tool like an MCP server pointed at that same path always sees
+// what's actually in the editor, instead of a stale copy in Downloads/).
+// Shift-click (or no linked file yet) prompts a file picker via saveFileAs().
+async function saveFile(e) {
+  const data = buildWorldData();
+  const json = JSON.stringify(data);
+  const mapCount = worldMaps.length + ' map' + (worldMaps.length > 1 ? 's' : '');
+
+  if (!supportsFileHandles) { downloadAsFile(json); toast('Saved world.json (' + mapCount + ')'); return; }
+  if (e?.shiftKey || !fileHandle) { return saveFileAs(json, mapCount); }
+
+  try {
+    const writable = await fileHandle.createWritable();
+    await writable.write(json);
+    await writable.close();
+    toast('Saved ' + fileHandle.name + ' (' + mapCount + ')');
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    console.error(err);
+    toast('Could not write to ' + fileHandle.name + ' — pick a file again');
+    fileHandle = null;
+    updateSaveButtonLabel();
+  }
+}
+
+async function saveFileAs(json, mapCount) {
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: 'world.json',
+      types: [{ description: 'World JSON', accept: { 'application/json': ['.json'] } }],
+    });
+    const writable = await handle.createWritable();
+    await writable.write(json);
+    await writable.close();
+    fileHandle = handle;
+    updateSaveButtonLabel();
+    toast('Saved ' + handle.name + ' (' + mapCount + ')');
+  } catch (err) {
+    if (err.name === 'AbortError') return; // user cancelled the picker
+    console.error(err);
+    toast('Save failed: ' + err.message);
+  }
+}
+
+function parseAndLoadWorldText(text, filename) {
+  const data = JSON.parse(text);
+  if (data.version === 3 && Array.isArray(data.maps)) {
+    loadWorldData(data);
+    toast('Loaded world: ' + filename + ' (' + data.maps.length + ' maps)');
+  } else if (data.tileMap) {
+    loadLegacyMap(data);
+    toast('Loaded legacy map: ' + filename);
+  } else {
+    throw new Error('Unrecognised file format');
+  }
+}
+
+async function loadFile() {
+  if (!supportsFileHandles) { document.getElementById('file-input').click(); return; }
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      types: [{ description: 'World JSON', accept: { 'application/json': ['.json'] } }],
+    });
+    const file = await handle.getFile();
+    parseAndLoadWorldText(await file.text(), file.name);
+    fileHandle = handle; // subsequent Saves overwrite this same file
+    updateSaveButtonLabel();
+  } catch (err) {
+    if (err.name === 'AbortError') return; // user cancelled the picker
+    console.error(err);
+    alert('Load error: ' + err.message);
+  }
+}
 
 function loadWorldData(data) {
   worldMaps = (data.maps || []).map(m => ({
@@ -4879,22 +4978,14 @@ function loadLegacyMap(data) {
   switchToMap(id);
 }
 
+// Fallback for browsers without the File System Access API (e.g. Firefox) — plain
+// upload input, no persistent handle, Save always downloads a fresh copy.
 document.getElementById('file-input').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = ev => {
-    try {
-      const data = JSON.parse(ev.target.result);
-      if (data.version === 3 && Array.isArray(data.maps)) {
-        loadWorldData(data);
-        toast('Loaded world: ' + file.name + ' (' + data.maps.length + ' maps)');
-      } else if (data.tileMap) {
-        loadLegacyMap(data);
-        toast('Loaded legacy map: ' + file.name);
-      } else {
-        throw new Error('Unrecognised file format');
-      }
-    } catch(e) { alert('Load error: ' + e.message); }
+    try { parseAndLoadWorldText(ev.target.result, file.name); }
+    catch(e) { alert('Load error: ' + e.message); }
     e.target.value = '';
   };
   reader.readAsText(file);
@@ -5349,6 +5440,7 @@ document.getElementById('btn-preview').onclick = () => {
 document.getElementById('btn-import'   ).onclick=importModal;
 document.getElementById('btn-save'     ).onclick=saveFile;
 document.getElementById('btn-load-file').onclick=loadFile;
+updateSaveButtonLabel();
 document.getElementById('btn-clear'    ).onclick=()=>{
   if(confirm('Clear the entire map?')){
     initMap(-1); undoStack=[]; redoStack=[]; renderMap(); toast('Map cleared');

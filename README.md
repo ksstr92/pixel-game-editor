@@ -91,9 +91,11 @@ A self-contained, browser-based RPG world builder and game engine. No installati
 - On map load the game shuffles the track list and plays them in sequence, looping
 
 ### Export & Import
-- **Save** — exports the entire world as `world.json`
-- **Load** — imports a previously saved `world.json`
+- **Save** — in Chrome/Edge, the first Save (or Load) lets you pick a `world.json` file and links to it; every Save after that overwrites that exact file in place, no repeated downloads. Shift-click Save to pick a different file. Browsers without this capability fall back to downloading a fresh `world.json` to your Downloads folder each time.
+- **Load** — opens a previously saved `world.json` and links to it the same way, so subsequent Saves write back to that file.
 - **▶ Preview** — opens `game.html` in a new tab and instantly loads the current world (uses BroadcastChannel, no file size limit)
+
+> **Working with an external tool (e.g. an MCP server)?** Link the editor to the exact same `world.json` path that tool reads/writes — Load that file once in the editor, and from then on both sides are always looking at the same file instead of silently diverging copies.
 
 ---
 
