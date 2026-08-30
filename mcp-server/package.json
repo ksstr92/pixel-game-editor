@@ -10,7 +10,10 @@
     "start": "node index.js",
     "test": "node test/smoke.js"
   },
-  "keywords": ["mcp", "model-context-protocol"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol"
+  ],
   "author": "",
   "license": "MIT",
   "type": "commonjs",

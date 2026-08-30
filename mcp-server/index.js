@@ -197,15 +197,43 @@ tool('asset_use_bundled', `Embed one of the tileset styles that ships in this pr
   });
 
 // ── Tile catalog ─────────────────────────────────────────────────────────
-// Names + default collision types for the 136 tiles in the bundled tileset, so
-// tiles can be picked by meaning ("PATH_A", "TREE_PINE") instead of guessing raw
-// integer ids. Only meaningful when the world uses a bundled/default-layout sheet.
+// Names, default collision types, and USAGE ROLES for the 136 tiles in the
+// bundled tileset, so tiles can be picked by meaning ("PATH_A", "TREE_PINE")
+// instead of guessing raw integer ids — and, critically, so the difference
+// between "this tile IS a complete object" and "this tile is one PIECE of a
+// bigger structure" is explicit instead of assumed.
+//
+// role values (see tileCatalog.js roleFor() for exactly which names map where):
+//   structure — already a whole object (a whole tree, a whole little house).
+//               Place ONE tile per tree/building. Never assemble several
+//               'structure' tiles to try to build one bigger building — there
+//               is no such assembly in this tileset; HOUSE_A..F are each a
+//               complete building already, just in different styles/sizes.
+//   wall      — one PIECE of a wall run (plain segment/corner/pillar/window/
+//               arch/bars/gate). A single 'wall' tile placed alone does NOT
+//               read as a wall or building — it must be assembled into an
+//               outline (see room_outline) or via object_template_create +
+//               object_stamp. Never tile_fill_rect a 'wall' tile over an area.
+//   door      — a doorway insert placed where a wall run has a gap.
+//   linear    — placed as a repeated line (fence, bridge, railing), not
+//               filled as an area and not a standalone object.
+//   terrain   — seamless ground cover (grass/path/water/floor/...). Safe to
+//               tile_fill_rect over any area.
+//   prop      — a complete single-tile decoration (chest, table, barrel,
+//               creature, character...). Place individually, like 'structure'.
+//   icon      — a small UI/decorative glyph (heart, cross, sparkle) — rarely
+//               what you want as actual map scenery.
+// Only meaningful when the world uses a bundled/default-layout sheet.
 
-tool('tile_catalog_list', 'List all 136 bundled tile ids with their names and default collision type.', {}, () => tileCatalog.catalog());
+tool('tile_catalog_list', 'List all 136 bundled tile ids with their names, default collision type, and usage role (structure/wall/door/linear/terrain/prop/icon — see tool description context). Call this before placing tiles for a new kind of scenery.', {}, () => tileCatalog.catalog());
 
-tool('tile_catalog_find', 'Search bundled tile names by substring (case-insensitive), e.g. "wall", "tree", "door".',
+tool('tile_catalog_find', 'Search bundled tile names by substring (case-insensitive), e.g. "wall", "tree", "door". Each result includes its usage role.',
   { query: z.string() },
   ({ query }) => tileCatalog.findByName(query));
+
+tool('tile_catalog_by_role', 'List bundled tiles by usage role: "structure" (complete single-tile buildings/trees — place one), "wall" (wall-run pieces that must be assembled — see room_outline), "door", "linear" (fences/bridges, placed in a line), "terrain" (freely fillable ground cover), "prop" (standalone decorations), or "icon" (UI glyphs, rarely map scenery).',
+  { role: z.enum(['structure', 'wall', 'door', 'linear', 'terrain', 'prop', 'icon']) },
+  ({ role }) => tileCatalog.findByRole(role));
 
 tool('tile_name_to_id', 'Resolve a bundled tile name (e.g. "GRASS_A") to its tile id.',
   { name: z.string() },
@@ -729,6 +757,47 @@ tool('object_stamp', 'Stamp an object template onto a map, top-left anchored at 
       }
     }
     return { message: `Stamped "${t.name}" at (${row},${col}) — ${painted} cell(s) touched` };
+  });
+
+tool('room_outline', `Paint a rectangular room using the bundled tileset's wall-run pieces: a north wall (corner, repeated wall segments, corner) along the top edge, with a floor fill underneath. This tileset only draws the north-facing wall of a room (the usual top-down-RPG convention — side/south walls aren't drawn so they don't block the view), so this paints exactly that, nothing more. It's the right way to make a "wall" or "building interior" read correctly — a single wall tile placed alone (tile_paint with a 'wall'-role tile) does not look like a wall.`,
+  {
+    mapId: z.string(),
+    row: z.number().int().describe('Row of the top wall.'),
+    col: z.number().int().describe('Column of the top-left corner.'),
+    width: z.number().int().min(3).describe('Total width in tiles, corners included.'),
+    height: z.number().int().min(2).describe('Total height in tiles, wall row included.'),
+    doorCol: z.number().int().optional().describe('Column offset (0-based from the left corner) in the top wall to leave open as a doorway. Must be strictly between the two corners.'),
+    floorTileId: z.number().int().optional().describe('Defaults to FLOOR_A. Pass a tile id from tile_catalog_by_role({role:"terrain"}) for a different look.'),
+  },
+  ({ mapId, row, col, width, height, doorCol, floorTileId }) => {
+    const m = findMap(mapId);
+    const kit = tileCatalog.ROOM_KIT;
+    const floor = floorTileId ?? kit.floorVariants[0];
+    if (doorCol !== undefined && (doorCol <= 0 || doorCol >= width - 1)) {
+      throw new Error(`doorCol must be strictly between the corners (1..${width - 2})`);
+    }
+    let painted = 0;
+    for (let dr = 0; dr < height; dr++) {
+      const mr = row + dr;
+      if (mr < 0 || mr >= m.rows) continue;
+      for (let dc = 0; dc < width; dc++) {
+        const mc = col + dc;
+        if (mc < 0 || mc >= m.cols) continue;
+        let tileId;
+        if (dr === 0) {
+          if (dc === doorCol) tileId = kit.door;
+          else if (dc === 0) tileId = kit.cornerTL;
+          else if (dc === width - 1) tileId = kit.cornerTR;
+          else tileId = kit.wallVariants[dc % kit.wallVariants.length];
+        } else {
+          tileId = floor;
+        }
+        m.tileMap[mr][mc] = tileId;
+        painted++;
+      }
+    }
+    ensureTileTables(Math.max(kit.cornerTL, kit.cornerTR, ...kit.wallVariants, kit.door, floor));
+    return { message: `Painted ${width}x${height} room outline at (${row},${col}) — ${painted} cell(s)`, doorAt: doorCol !== undefined ? { row, col: col + doorCol } : null };
   });
 
 // ── Boot ─────────────────────────────────────────────────────────────────

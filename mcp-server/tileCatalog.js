@@ -91,13 +91,67 @@ const DEFAULT_T = (() => {
 
 const TYPE_NAMES = Object.fromEntries(Object.entries(T).map(([k, v]) => [v, k]));
 
+// How a tile is meant to be used. Visually verified against the actual sheet
+// (asset/Monochrome/Tilemap/tilemap_packed.png) for the families that matter most:
+//
+//   'structure' — a complete single-tile object already (a whole little house, a
+//                 whole tree). Place ONE tile per object — do not try to build a
+//                 bigger building out of several of these.
+//   'wall'      — a modular wall-run PIECE (plain segment, corner, pillar, window,
+//                 arch, bars, gate). Placing exactly one of these alone does not
+//                 read as "a wall" — it must be assembled edge+corner style into a
+//                 room outline. Use object_template_create/object_stamp (or
+//                 room_outline) for these, never tile_fill_rect.
+//   'door'      — a floor-level door/doorway insert, placed where a wall run has a
+//                 gap.
+//   'linear'    — meant to be placed in a repeated line (fence, bridge), not
+//                 filled as an area and not a standalone object either.
+//   'terrain'   — ground cover that tiles seamlessly. Safe to tile_fill_rect over
+//                 an area.
+//   'prop'      — a complete single-tile decoration/object (chest, table, barrel,
+//                 gravestone, creature, character...). Place individually, like
+//                 'structure'.
+//   'icon'      — a small UI/decorative glyph (heart, cross, sparkle, empty frame)
+//                 that isn't really world scenery — usually not what you want for
+//                 a map tile.
+function roleFor(name) {
+  if (/^(WATER|GRASS|PATH|SAND|DIRT|GRAVEL|COBBLE|PAVED|FLOOR|STONE_GND)/.test(name)) return 'terrain';
+  if (/^WALL_|_CNR_|PILLAR|_WIN_|_ARCH_|_BARS|_GATE/.test(name)) return 'wall';
+  if (/^DOOR_/.test(name)) return 'door';
+  if (name === 'FENCE' || name === 'BRIDGE' || name === 'RAILING') return 'linear';
+  if (/^(TREE_|HOUSE_)/.test(name)) return 'structure';
+  if (/^(HEART_|FRAME_)/.test(name) || /^(CROSS|SPARKLE|SMOKE|SCRATCH|LINE_DIAG|CLOUD|FACE)$/.test(name)) return 'icon';
+  return 'prop';
+}
+
 function catalog() {
-  return MT_NAMES.map((name, id) => ({ id, name, defaultType: TYPE_NAMES[DEFAULT_T[id]] }));
+  return MT_NAMES.map((name, id) => ({ id, name, defaultType: TYPE_NAMES[DEFAULT_T[id]], role: roleFor(name) }));
 }
 
 function findByName(query) {
   const q = query.toLowerCase();
   return catalog().filter(t => t.name.toLowerCase().includes(q));
+}
+
+function findByRole(role) {
+  return catalog().filter(t => t.role === role);
+}
+
+// A hand-picked kit of ids for building a simple room outline (see room_outline
+// tool) — a top wall row with corners, over a floor fill. This tileset draws only
+// the north-facing wall of a room (the top-down RPG convention where side/south
+// walls aren't drawn so they don't block the view) — there are no distinct
+// left/right/bottom wall graphics to assemble.
+const ROOM_KIT = {
+  cornerTL: idForNameSafe('WALL_CNR_TL'),
+  cornerTR: idForNameSafe('WALL_CNR_TR'),
+  wallVariants: ['WALL_C', 'WALL_D', 'WALL_E', 'WALL_F', 'WALL_G'].map(idForNameSafe),
+  floorVariants: MT_NAMES.filter(n => n.startsWith('FLOOR_')).map(idForNameSafe),
+  door: idForNameSafe('DOOR_A'),
+};
+
+function idForNameSafe(name) {
+  return MT_NAMES.indexOf(name);
 }
 
 function idForName(name) {
@@ -110,4 +164,4 @@ function idForName(name) {
 // style to asset_use_bundled to embed one directly, no manual file path needed.
 const BUNDLED_STYLES = ['Monochrome', 'Default', 'Dot Matrix'];
 
-module.exports = { MT_NAMES, DEFAULT_T, TOTAL, catalog, findByName, idForName, BUNDLED_STYLES };
+module.exports = { MT_NAMES, DEFAULT_T, TOTAL, catalog, findByName, findByRole, idForName, roleFor, ROOM_KIT, BUNDLED_STYLES };

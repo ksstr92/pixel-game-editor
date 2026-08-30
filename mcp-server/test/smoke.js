@@ -77,6 +77,28 @@ async function main() {
   });
   await call('object_stamp', { mapId, objectId: objTmpl.id, row: 20, col: 20 });
 
+  // Tile roles + room outline helper
+  const wallTiles = await call('tile_catalog_by_role', { role: 'wall' });
+  assert(wallTiles.every(t => t.role === 'wall'));
+  assert(wallTiles.some(t => t.name === 'WALL_CNR_TL'));
+  const structureTiles = await call('tile_catalog_by_role', { role: 'structure' });
+  assert(structureTiles.some(t => t.name === 'HOUSE_A'));
+  const catalogWithRoles = await call('tile_catalog_list', {});
+  assert(catalogWithRoles.every(t => typeof t.role === 'string'));
+
+  const doorId = (await call('tile_name_to_id', { name: 'DOOR_A' })).id;
+  const cornerTLId = (await call('tile_name_to_id', { name: 'WALL_CNR_TL' })).id;
+  const floorAId = (await call('tile_name_to_id', { name: 'FLOOR_A' })).id;
+
+  const room = await call('room_outline', { mapId, row: 30, col: 10, width: 6, height: 5, doorCol: 3 });
+  console.log(room.message);
+  const doorTileAfter = await call('tile_get', { mapId, row: 30, col: 13 });
+  const cornerTileAfter = await call('tile_get', { mapId, row: 30, col: 10 });
+  const floorTileAfter = await call('tile_get', { mapId, row: 32, col: 12 });
+  assert.strictEqual(doorTileAfter.base, doorId);
+  assert.strictEqual(cornerTileAfter.base, cornerTLId);
+  assert.strictEqual(floorTileAfter.base, floorAId);
+
   // Pixel-level custom tile editing
   const blankTile = await call('tile_create_blank', { name: 'CustomSign' });
   await call('tile_pixel_paint', {

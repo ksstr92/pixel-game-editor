@@ -45,9 +45,9 @@ validates the result, and asserts the saved `world.json` has the expected shape.
 
 - **World**: `world_new`, `world_load`, `world_save`, `world_summary`, `world_get_raw`, `world_validate`
 - **Assets**: `asset_use_bundled` (embeds one of the tileset styles shipped in `asset/` — prefer this), `asset_set_tileset` (embeds any local PNG spritesheet)
-- **Tile catalog**: `tile_catalog_list`, `tile_catalog_find`, `tile_name_to_id` — look up bundled tile ids by name (`GRASS_A`, `TREE_PINE`, `WALL_GATE`, …) instead of guessing integers
-- **Maps**: `map_create`, `map_list`, `map_get`, `map_rename`, `map_delete`, `map_duplicate`, `map_set_spawn`
-- **Tiles**: `tile_paint`, `tile_fill_rect`, `tile_get`, `tiletype_set`, `tiletype_get`, `tile_tint_set`
+- **Tile catalog**: `tile_catalog_list`, `tile_catalog_find`, `tile_catalog_by_role`, `tile_name_to_id` — look up bundled tile ids by name (`GRASS_A`, `TREE_PINE`, `WALL_GATE`, …) or by usage role instead of guessing integers
+- **Maps**: `map_create` (always 64×64 — see [Other notes](#other-notes)), `map_list`, `map_get`, `map_rename`, `map_delete`, `map_duplicate`, `map_set_spawn`
+- **Tiles**: `tile_paint`, `tile_fill_rect`, `tile_get`, `tiletype_set`, `tiletype_get`, `tile_tint_set`, `room_outline` (assembles a wall/corner/floor room instead of placing wall pieces one at a time)
 - **Pixel-level tile editing**: `tile_pixels_set`, `tile_pixel_paint`, `tile_pixel_fill`, `tile_pixels_get`, `tile_pixels_clear`, `tile_duplicate`, `tile_create_blank`
 - **NPCs**: `npc_add`, `npc_update`, `npc_delete`, `npc_list`, `npc_template_create`, `npc_template_list`, `npc_template_delete`
 - **Triggers**: `trigger_add`, `trigger_update`, `trigger_delete`, `trigger_list` (event types: `dialog`, `cameraPan`, `tileChange`, `setTimeOfDay`, `transitionToMap`)
@@ -79,9 +79,40 @@ layout in different art styles — the same ids and catalog names apply to all t
 spritesheet instead (in which case the catalog/default types no longer apply, since they're
 specific to the bundled layout).
 
+### Not every tile is a complete object
+
+This is the single most important thing to get right, and the easiest to get wrong: **some
+bundled tiles are already a whole object, and some are one piece of a bigger structure that
+only looks right once several are assembled together.** Placing a single `WALL_C` tile does
+not give you "a wall" any more than placing a single brick gives you a house — it just looks
+like a stray gray square. Every tile in the catalog has a `role` telling you which kind it is
+(returned by `tile_catalog_list`/`find`/`by_role`):
+
+| role | meaning | how to place it |
+|---|---|---|
+| `structure` | already a complete object (a whole tree, a whole little house — `HOUSE_A`..`HOUSE_F` are six *complete* building styles, not building parts) | one `tile_paint` call, done |
+| `prop` | a complete single-tile decoration (chest, table, barrel, gravestone, a character sprite...) | one `tile_paint` call, done |
+| `terrain` | seamless ground cover (grass, path, water, floor...) | `tile_fill_rect` over an area |
+| `wall` | one PIECE of a wall run — plain segment, corner, pillar, window, arch, bars, gate | assemble into an outline, e.g. `room_outline`, or a custom layout via `object_template_create` + `object_stamp` — never place alone, never `tile_fill_rect` |
+| `door` | a doorway insert placed where a wall run has a gap | goes in the wall row itself (see `room_outline`'s `doorCol`) |
+| `linear` | placed as a repeated line, not a fill and not a standalone object (fence, bridge, railing) | a row of `tile_paint` calls along the boundary |
+| `icon` | a small UI/decorative glyph (heart, cross, sparkle) | rarely what you want as actual map scenery |
+
+For the common case — a room or building interior — call `room_outline` instead of hand-placing
+wall pieces: it paints a correct corner+wall top edge with a floor fill beneath, which is the
+convention this tileset actually draws (only the north-facing wall — top-down RPGs traditionally
+leave south/side walls undrawn so they don't block the view of what's inside). For anything more
+elaborate (a custom room shape, a specific prop layout), build it once with `object_template_create`
+from tiles picked via `tile_catalog_by_role`, then reuse it anywhere with `object_stamp`.
+
 ## Other notes
 
-- Maps default to the editor's 64×64 grid; pass `cols`/`rows` to `map_create` for other sizes.
+- Maps are always the editor's 64×64 grid. `map_create` no longer takes `cols`/`rows` —
+  `editor.html` hardcodes `MAP_ROWS`/`MAP_COLS` = 64 in ~80 places and a map's own `cols`/`rows`
+  fields are never read for the actual grid (only for multi-tile object stamps), so a
+  different-sized map's `tileMap` doesn't match what the editor expects and breaks
+  switching/rendering/deleting in the UI. `world_validate` flags any map that isn't 64×64 (e.g.
+  from a hand-edited or foreign `world.json`) before you open it in the editor.
 - Pixel-level tile edits (`tile_pixel_paint`/`tile_pixel_fill`/`tile_pixels_set`) write to
   the same `customTiles[id] = { base, pixels }` structure editor.html and game.html read
   directly — `base` is the sheet tile drawn underneath (-1 for none), `pixels` is a 16×16
