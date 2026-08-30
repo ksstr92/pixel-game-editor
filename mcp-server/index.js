@@ -239,18 +239,41 @@ tool('tile_name_to_id', 'Resolve a bundled tile name (e.g. "GRASS_A") to its til
   { name: z.string() },
   ({ name }) => ({ name, id: tileCatalog.idForName(name) }));
 
-tool('structure_guide', 'Read before placing scenery: minimum-tile-count conventions for common concepts (trees, forests, houses, rooms), and when a single tile is enough vs. when you need a multi-tile composite. Call this once per session before building out a map\'s scenery.', {}, () => ({
+tool('structure_guide', 'Read before placing scenery: minimum-tile-count conventions for common concepts (trees, forests, houses, rooms), how many tiles ONE object needs — and separately, how several objects should relate to EACH OTHER spatially (clustered into a village vs. deliberately isolated, connected by a path vs. not, a river that actually flows through the map vs. a disconnected puddle). Call this once per session before building out a map\'s scenery.', {}, () => ({
   principles: [
     'A "structure" or "prop" role tile (tile_catalog_by_role) is already a complete object at 1 tile — placing several of the SAME concept next to each other does not make one bigger version of it; it just repeats the object.',
     'A "wall"/"door"/"linear" role tile is one PIECE of something bigger and looks wrong placed alone — assemble with room_outline or a saved object_template (see object_template_find before building a new one).',
     'More tiles = more visual detail, not a different collision/gameplay meaning by itself — scale up tile count only for scenery you want to stand out (a landmark building, a dense forest), not uniformly.',
+    'Decide the RELATIONSHIP before placing: is this one of a cluster (village houses, a forest, a mountain range) or a deliberately isolated landmark (a lone cottage, a lone dead tree)? That decision drives spacing and whether a path connects it to anything — see "layout" below.',
   ],
   concepts: [
     { concept: 'tree', minTiles: 1, guidance: 'One TREE_* structure tile is a complete tree. Fine to scatter individually across grass.' },
-    { concept: 'forest', minTiles: 4, guidance: 'A cluster of 4+ TREE_* tiles reads as a forest patch. Vary which TREE_* variant you use and offset them irregularly (not a perfect grid) so it doesn\'t look planted.' },
+    { concept: 'forest', minTiles: 4, guidance: 'A cluster of 4+ TREE_* tiles reads as a forest patch. Use scatter_area with several TREE_* ids (for variety) and minSpacing 1-2 for a dense wood, 3+ for a sparse treeline — never a hand-placed perfect grid, it reads as planted.' },
     { concept: 'small building', minTiles: 1, guidance: 'One HOUSE_* structure tile is a complete small building — good for background/distant buildings or a village of simple houses.' },
     { concept: 'large / detailed building', minTiles: '10+ (e.g. 13)', guidance: 'Needs a hand-built multi-tile composite (roof + textured walls + a door insert) saved via object_template_create with category:"building" — there is no single tile for this, and no verified stock recipe shipped here yet. Build it once, look at it in the editor, then reuse it with object_stamp instead of re-deriving the layout each time. Check object_template_find({category:"building"}) first in case one already exists in this world.' },
     { concept: 'room / building interior', minTiles: 'width*height', guidance: 'Use room_outline for a plain rectangular room (wall run + floor fill). For anything irregular, build once with object_template_create using wall/door role tiles, verify visually, then reuse.' },
+  ],
+  layout: [
+    {
+      relationship: 'settlement (houses that belong together)',
+      guidance: 'Cluster building placements within roughly 3-8 tiles of each other, facing/opening onto a shared path or a central clearing — not scattered randomly across the whole map. Use path_between to connect every house entrance to the shared path, and that path to the map\'s spawn/exit. A group of houses with no path between them reads as ruins, not a lived-in village.',
+    },
+    {
+      relationship: 'isolated structure (a lone house, a hermit\'s hut, a landmark tree)',
+      guidance: 'Deliberately keep 10+ tiles of distance from other structures and skip the connecting path (or give it a single unmaintained-looking dirt path via path_between with a PATH/DIRT tileId) — the absence of infrastructure is what signals "remote" or "abandoned". Don\'t place other buildings nearby, or it stops reading as isolated.',
+    },
+    {
+      relationship: 'river',
+      guidance: 'Build with path_between using a WATER_* tileId and several waypoints so it can meander — pass width 2-3 for a proper river vs. 1 for a stream. It must be a single unbroken connected line with a clear source and exit (both ends at the map edge, or one end feeding a lake/pond area) — a short isolated water segment in the middle of a field reads as a puddle, not a river. Where a road path must cross it, place a BRIDGE tile (tile_name_to_id({name:"BRIDGE"})) at the crossing cell after painting both the river and the road.',
+    },
+    {
+      relationship: 'road / path network',
+      guidance: 'Only draw a path with path_between between two places that matter — spawn, a map exit, a settlement, a landmark. A path connects things; it should not start and end in open grass with nothing at either end, and it should not cross itself in confusing ways. Building entrances (the doorCol cell from room_outline, or the front tile of a structure) are the natural path endpoints.',
+    },
+    {
+      relationship: 'general spacing rule',
+      guidance: 'Objects meant to belong to the same group (same settlement, same forest, same rock field) go close together with a connecting path if they are buildings; objects meant to read as unrelated/separate go far enough apart (10+ tiles) that the eye doesn\'t group them. There is no good "medium" distance — near-but-unconnected buildings just look like a layout mistake.',
+    },
   ],
 }));
 
@@ -830,6 +853,86 @@ tool('room_outline', `Paint a rectangular room using the bundled tileset's wall-
     }
     ensureTileTables(Math.max(kit.cornerTL, kit.cornerTR, ...kit.wallVariants, kit.door, floor));
     return { message: `Painted ${width}x${height} room outline at (${row},${col}) — ${painted} cell(s)`, doorAt: doorCol !== undefined ? { row, col: col + doorCol } : null };
+  });
+
+// Single-step-per-cell digital line: always moves exactly one row OR one col at a
+// time (never both), so consecutive cells are always 4-connected — no diagonal gaps.
+function connectedLine(r0, c0, r1, c1) {
+  const pts = [[r0, c0]];
+  let r = r0, c = c0;
+  while (r !== r1 || c !== c1) {
+    const dr = r1 - r, dc = c1 - c;
+    if (Math.abs(dr) >= Math.abs(dc) && dr !== 0) r += Math.sign(dr);
+    else if (dc !== 0) c += Math.sign(dc);
+    else r += Math.sign(dr);
+    pts.push([r, c]);
+  }
+  return pts;
+}
+
+tool('path_between', `Paint a connected line of one tile (a road, a river segment, a fence run...) through a sequence of waypoints — the right way to make two places actually look connected, instead of two isolated tiles with nothing between them. Guarantees no gaps: every painted cell is 4-connected to the next. Use this for roads linking a spawn/house/exit to the rest of the map, and for rivers (with a 'terrain' water tileId) — a river or road that doesn't connect to anything reads as decoration, not infrastructure.`,
+  {
+    mapId: z.string(),
+    layer: z.enum(['base', 'overlay']).default('base'),
+    waypoints: z.array(z.object({ row: z.number().int(), col: z.number().int() })).min(2).describe('The line passes through every waypoint in order — pass just [from, to] for a simple direct connector, or more points for a river/road that bends.'),
+    tileId: z.number().int(),
+    width: z.number().int().min(1).max(5).default(1).describe('Line thickness — paints a (2*floor(width/2)+1)-wide square brush centered on each line cell. Use >1 for a wider river.'),
+  },
+  ({ mapId, layer, waypoints, tileId, width }) => {
+    const m = findMap(mapId);
+    const grid = layer === 'overlay' ? m.overlayMap : m.tileMap;
+    const radius = Math.floor((width - 1) / 2);
+    const cells = new Set();
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      const a = waypoints[i], b = waypoints[i + 1];
+      for (const [r, c] of connectedLine(a.row, a.col, b.row, b.col)) {
+        for (let dr = -radius; dr <= radius; dr++) {
+          for (let dc = -radius; dc <= radius; dc++) cells.add(`${r + dr},${c + dc}`);
+        }
+      }
+    }
+    let painted = 0;
+    for (const key of cells) {
+      const [r, c] = key.split(',').map(Number);
+      if (r < 0 || r >= m.rows || c < 0 || c >= m.cols) continue;
+      grid[r][c] = tileId;
+      painted++;
+    }
+    if (tileId >= 0) ensureTileTables(tileId);
+    return { message: `Painted a connected path through ${waypoints.length} waypoint(s) — ${painted} cell(s)` };
+  });
+
+tool('scatter_area', `Scatter copies of one or more tiles across a rectangular area with randomized positions and a minimum spacing — the right way to build a forest, a boulder field, a flower patch, or any "natural" cluster, instead of a hand-placed grid (which reads as planted/artificial) or a single repeated tile (which reads as one object, not a region). Pass several tileIds (e.g. multiple TREE_* variants) for visual variety.`,
+  {
+    mapId: z.string(),
+    layer: z.enum(['base', 'overlay']).default('base'),
+    rowStart: z.number().int(), colStart: z.number().int(),
+    rowEnd: z.number().int(), colEnd: z.number().int(),
+    tileIds: z.array(z.number().int()).min(1).describe('One tile id is placed per spot, chosen randomly from this list each time — pass several for variety (e.g. TREE_A/B/C/PINE ids for a mixed forest).'),
+    count: z.number().int().positive().describe('How many to place. May place fewer if the area is too small/dense for the requested spacing.'),
+    minSpacing: z.number().int().min(0).default(2).describe('Minimum distance (Chebyshev) kept between placed tiles. 0-1 = dense thicket, 3+ = sparse scatter.'),
+    onlyOverBaseTileIds: z.array(z.number().int()).optional().describe('If given, only scatter onto cells whose current base tileMap value is one of these ids — e.g. restrict a forest to grass so it doesn\'t plant trees over a path or water.'),
+  },
+  ({ mapId, layer, rowStart, colStart, rowEnd, colEnd, tileIds, count, minSpacing, onlyOverBaseTileIds }) => {
+    const m = findMap(mapId);
+    const grid = layer === 'overlay' ? m.overlayMap : m.tileMap;
+    const r0 = Math.max(0, Math.min(rowStart, rowEnd)), r1 = Math.min(m.rows - 1, Math.max(rowStart, rowEnd));
+    const c0 = Math.max(0, Math.min(colStart, colEnd)), c1 = Math.min(m.cols - 1, Math.max(colStart, colEnd));
+    const placed = [];
+    const maxAttempts = count * 30;
+    let attempts = 0;
+    while (placed.length < count && attempts < maxAttempts) {
+      attempts++;
+      const r = r0 + Math.floor(Math.random() * (r1 - r0 + 1));
+      const c = c0 + Math.floor(Math.random() * (c1 - c0 + 1));
+      if (onlyOverBaseTileIds && !onlyOverBaseTileIds.includes(m.tileMap[r][c])) continue;
+      if (placed.some(p => Math.max(Math.abs(p.row - r), Math.abs(p.col - c)) < minSpacing)) continue;
+      const tileId = tileIds[Math.floor(Math.random() * tileIds.length)];
+      grid[r][c] = tileId;
+      placed.push({ row: r, col: c, tileId });
+    }
+    for (const id of tileIds) if (id >= 0) ensureTileTables(id);
+    return { message: `Placed ${placed.length}/${count} tile(s)${placed.length < count ? ' (area too small/dense for the rest)' : ''}`, placed };
   });
 
 // ── Boot ─────────────────────────────────────────────────────────────────

@@ -48,6 +48,7 @@ validates the result, and asserts the saved `world.json` has the expected shape.
 - **Tile catalog**: `tile_catalog_list`, `tile_catalog_find`, `tile_catalog_by_role`, `tile_name_to_id` — look up bundled tile ids by name (`GRASS_A`, `TREE_PINE`, `WALL_GATE`, …) or by usage role instead of guessing integers
 - **Maps**: `map_create` (always 64×64 — see [Other notes](#other-notes)), `map_list`, `map_get`, `map_rename`, `map_delete`, `map_duplicate`, `map_set_spawn`
 - **Tiles**: `tile_paint`, `tile_fill_rect`, `tile_get`, `tiletype_set`, `tiletype_get`, `tile_tint_set`, `room_outline` (assembles a wall/corner/floor room instead of placing wall pieces one at a time)
+- **Spatial composition**: `path_between` (a connected, gap-free line through waypoints — roads, rivers, fences), `scatter_area` (randomized, spaced placement for forests/boulder fields/flower patches)
 - **Pixel-level tile editing**: `tile_pixels_set`, `tile_pixel_paint`, `tile_pixel_fill`, `tile_pixels_get`, `tile_pixels_clear`, `tile_duplicate`, `tile_create_blank`
 - **NPCs**: `npc_add`, `npc_update`, `npc_delete`, `npc_list`, `npc_template_create`, `npc_template_list`, `npc_template_delete`
 - **Triggers**: `trigger_add`, `trigger_update`, `trigger_delete`, `trigger_list` (event types: `dialog`, `cameraPan`, `tileChange`, `setTimeOfDay`, `transitionToMap`)
@@ -56,7 +57,7 @@ validates the result, and asserts the saved `world.json` has the expected shape.
 - **Music**: `music_track_add`, `music_track_remove`, `music_list`
 - **Recipes**: `recipe_create`, `recipe_list`, `recipe_delete`
 - **Object stamps**: `object_template_create` (category/description/tileCount), `object_template_list`, `object_template_find`, `object_template_delete`, `object_stamp`
-- **Structure guidance**: `structure_guide` — minimum-tile-count conventions for trees/forests/houses/rooms
+- **Structure guidance**: `structure_guide` — minimum-tile-count conventions for trees/forests/houses/rooms, plus how objects should relate to each other spatially (clustered vs. isolated, connected vs. not)
 
 `world_validate` checks for dangling references (map ids in exits/transitions/schedules,
 template ids in NPCs/items/recipes) so you can catch mistakes before opening the file in
@@ -126,6 +127,30 @@ This server doesn't ship a verified "large house" template — the exact roof/wa
 detailed multi-tile building need a quick visual check in the editor (hover a palette tile to see
 its name) before they're trustworthy to reuse. Build one, confirm it looks right, then register it
 so it doesn't need re-deriving.
+
+### Placing several objects: how should they relate to each other?
+
+Getting one object right (the sections above) doesn't say anything about whether three houses
+should look like a village or three unrelated buildings, or whether a river actually flows through
+the map instead of sitting there as a disconnected puddle. That's a separate question — call
+`structure_guide` and read its `layout` array, or use the short version:
+
+- **Things that belong together** (village houses, a forest, a rock field) go **close together**
+  (roughly 3-8 tiles apart for buildings) — and if they're buildings, **connected by a path**
+  (`path_between` from each entrance to a shared road). A cluster of houses with no path between
+  them reads as ruins, not a village.
+- **Things that are deliberately separate** (a hermit's hut, a lone landmark tree) go **far apart**
+  (10+ tiles from anything else) and usually **skip the path** — the absence of infrastructure is
+  what signals "remote." There's no good middle distance: near-but-unconnected just looks like a
+  mistake.
+- **Rivers and roads are infrastructure, not decoration** — they need two real endpoints (a river
+  runs from map edge to map edge, or into a lake; a road runs between two places that matter, like
+  spawn and a village). Build them with `path_between`, which guarantees no gaps along the way
+  (every painted cell is 4-connected to the next), and drop a `BRIDGE` tile at any point where a
+  road crosses a river.
+- **Regions read as regions when they're randomized, not tiled** — a forest, boulder field, or
+  flower patch built with `scatter_area` (randomized positions + minimum spacing) looks natural; the
+  same tile repeated on a perfect grid looks planted.
 
 ## Other notes
 

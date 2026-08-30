@@ -89,6 +89,8 @@ async function main() {
   const guide = await call('structure_guide', {});
   assert(guide.concepts.some(c => c.concept === 'forest' && c.minTiles === 4));
   assert(guide.concepts.some(c => c.concept === 'tree' && c.minTiles === 1));
+  assert(guide.layout.some(l => l.relationship.includes('river')));
+  assert(guide.layout.some(l => l.relationship.includes('settlement')));
 
   // Tile roles + room outline helper
   const wallTiles = await call('tile_catalog_by_role', { role: 'wall' });
@@ -111,6 +113,43 @@ async function main() {
   assert.strictEqual(doorTileAfter.base, doorId);
   assert.strictEqual(cornerTileAfter.base, cornerTLId);
   assert.strictEqual(floorTileAfter.base, floorAId);
+
+  // path_between: connected line with no gaps
+  const pathTileId = (await call('tile_name_to_id', { name: 'PATH_A' })).id;
+  const pathRes = await call('path_between', {
+    mapId, tileId: pathTileId,
+    waypoints: [{ row: 40, col: 5 }, { row: 40, col: 15 }, { row: 45, col: 15 }],
+  });
+  console.log(pathRes.message);
+  for (let c = 5; c <= 15; c++) assert.strictEqual((await call('tile_get', { mapId, row: 40, col: c })).base, pathTileId);
+  for (let r = 40; r <= 45; r++) assert.strictEqual((await call('tile_get', { mapId, row: r, col: 15 })).base, pathTileId);
+
+  const widePathRes = await call('path_between', {
+    mapId, tileId: pathTileId, width: 3,
+    waypoints: [{ row: 50, col: 5 }, { row: 50, col: 10 }],
+  });
+  assert(widePathRes.message.includes('cell(s)'));
+  assert.strictEqual((await call('tile_get', { mapId, row: 49, col: 7 })).base, pathTileId); // brush width covers row above the line
+
+  // scatter_area: forest cluster respecting spacing and terrain filter
+  const treeAId = (await call('tile_name_to_id', { name: 'TREE_A' })).id;
+  const treeBId = (await call('tile_name_to_id', { name: 'TREE_B' })).id;
+  const scatterRes = await call('scatter_area', {
+    mapId, rowStart: 0, colStart: 0, rowEnd: 10, colEnd: 10,
+    tileIds: [treeAId, treeBId], count: 8, minSpacing: 2,
+  });
+  console.log(scatterRes.message);
+  assert(scatterRes.placed.length > 0 && scatterRes.placed.length <= 8);
+  for (const p of scatterRes.placed) {
+    assert([treeAId, treeBId].includes((await call('tile_get', { mapId, row: p.row, col: p.col })).base));
+  }
+  // no two placed trees violate minSpacing
+  for (let i = 0; i < scatterRes.placed.length; i++) {
+    for (let j = i + 1; j < scatterRes.placed.length; j++) {
+      const a = scatterRes.placed[i], b = scatterRes.placed[j];
+      assert(Math.max(Math.abs(a.row - b.row), Math.abs(a.col - b.col)) >= 2);
+    }
+  }
 
   // Pixel-level custom tile editing
   const blankTile = await call('tile_create_blank', { name: 'CustomSign' });
