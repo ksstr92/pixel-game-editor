@@ -1,0 +1,127 @@
+'use strict';
+const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
+const path = require('path');
+const assert = require('assert');
+
+async function main() {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(__dirname, '..', 'index.js')],
+  });
+  const client = new Client({ name: 'smoke-test', version: '1.0.0' });
+  await client.connect(transport);
+
+  const tools = await client.listTools();
+  console.log(`Registered tools: ${tools.tools.length}`);
+  assert(tools.tools.length > 30, 'expected 30+ tools');
+
+  async function call(name, args) {
+    const res = await client.callTool({ name, arguments: args });
+    if (res.isError) throw new Error(`${name} failed: ${res.content[0].text}`);
+    return JSON.parse(res.content[0].text);
+  }
+
+  await call('world_new', { firstMapName: 'Overworld' });
+  const summary1 = await call('world_summary', {});
+  const mapId = summary1.maps[0].id;
+  console.log('map created:', mapId);
+
+  const map2 = await call('map_create', { name: 'Dungeon', cols: 32, rows: 32 });
+  console.log('map2 created:', map2.id);
+
+  await call('tile_fill_rect', { mapId, layer: 'base', rowStart: 0, colStart: 0, rowEnd: 63, colEnd: 63, tileId: 17 });
+  await call('tiletype_set', { tileId: 17, type: 'GRASS' });
+  await call('tile_paint', { mapId, layer: 'overlay', cells: [{ row: 5, col: 5, tileId: 4 }] });
+  await call('tiletype_set', { tileId: 4, type: 'TREE' });
+
+  const npc = await call('npc_add', {
+    mapId, row: 10, col: 10, name: 'Old Man', tileId: 10,
+    dialog: ['Hello traveler.', 'Watch out for goblins.'],
+    patrol: { type: 'wander', radius: 3 },
+  });
+  console.log('npc created:', npc.id);
+
+  const trigger = await call('trigger_add', {
+    mapId, row: 3, col: 3, activation: 'walk', title: 'Intro', oneShot: true,
+    events: [{ type: 'dialog', lines: ['Welcome!'] }, { type: 'setTimeOfDay', gameMinutes: 480 }],
+  });
+  console.log('trigger created:', trigger.id);
+
+  const itmpl = await call('item_template_create', { name: 'Potion', tileId: 22, description: 'Heals you', pickup: 'auto' });
+  await call('item_add', { mapId, row: 7, col: 7, name: 'Potion', tileId: 22, templateId: itmpl.id });
+
+  const itmpl2 = await call('item_template_create', { name: 'Herb', tileId: 23 });
+  await call('recipe_create', { inputs: [{ templateId: itmpl2.id, count: 2 }, { templateId: itmpl2.id, count: 1 }], output: { templateId: itmpl.id, count: 1 } });
+
+  await call('exit_add', { mapId, fromRow: 0, fromCol: 0, toMapId: map2.id, toRow: 5, toCol: 5 });
+  await call('music_track_add', { mapId, filename: 'theme.mp3' });
+
+  const objTmpl = await call('object_template_create', {
+    name: 'Small House', rows: 2, cols: 2, tiles: [[10, 11], [12, 13]],
+  });
+  await call('object_stamp', { mapId, objectId: objTmpl.id, row: 20, col: 20 });
+
+  // Pixel-level custom tile editing
+  const blankTile = await call('tile_create_blank', { name: 'CustomSign' });
+  await call('tile_pixel_paint', {
+    tileId: blankTile.tileId,
+    pixels: [{ x: 0, y: 0, color: '#ff0000' }, { x: 1, y: 0, color: '#00ff00' }],
+  });
+  await call('tile_pixel_fill', { tileId: blankTile.tileId, x: 8, y: 8, color: '#0000ffcc' });
+  const readBack = await call('tile_pixels_get', { tileId: blankTile.tileId });
+  assert.strictEqual(readBack.pixels[0][0], '#ff0000');
+  assert.strictEqual(readBack.pixels[0][1], '#00ff00');
+  assert.strictEqual(readBack.pixels[8][8], '#0000ffcc');
+  assert.strictEqual(readBack.base, -1);
+
+  const grid16 = Array.from({ length: 16 }, () => Array.from({ length: 16 }, () => null));
+  grid16[15][15] = '#123456';
+  await call('tile_pixels_set', { tileId: 5, pixels: grid16 });
+  const t5 = await call('tile_pixels_get', { tileId: 5 });
+  assert.strictEqual(t5.base, 5);
+  assert.strictEqual(t5.pixels[15][15], '#123456');
+
+  const dup = await call('tile_duplicate', { tileId: 5, name: 'Wall_Variant' });
+  const dupPixels = await call('tile_pixels_get', { tileId: dup.newTileId });
+  assert.strictEqual(dupPixels.pixels[15][15], '#123456');
+
+  await call('tile_pixels_clear', { tileId: dup.newTileId });
+  const cleared = await call('tile_pixels_get', { tileId: dup.newTileId });
+  assert.strictEqual(cleared, null);
+
+  const validation = await call('world_validate', {});
+  console.log('validation:', validation);
+  assert.strictEqual(validation.valid, true, 'expected world to validate cleanly');
+
+  const outPath = path.join(require('os').tmpdir(), 'mcp-smoke-world.json');
+  const saveRes = await call('world_save', { filePath: outPath });
+  console.log(saveRes.message);
+
+  const fs = require('fs');
+  const written = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  assert.strictEqual(written.maps.length, 2);
+  assert.strictEqual(written.maps[0].npcs.length, 1);
+  assert.strictEqual(written.maps[0].triggers.length, 1);
+  assert.strictEqual(written.maps[0].items.length, 1);
+  assert.strictEqual(written.maps[0].exits.length, 1);
+  assert.strictEqual(written.maps[0].music.length, 1);
+  assert.strictEqual(written.maps[0].tileMap.length, 64);
+  assert.strictEqual(written.maps[0].tileMap[0].length, 64);
+  assert.strictEqual(written.maps[0].tileMap[30][30], 17);
+  assert.strictEqual(written.maps[0].overlayMap[5][5], 4);
+  assert.strictEqual(written.recipes.length, 1);
+  assert.strictEqual(written.objectTemplates.length, 1);
+  assert.strictEqual(written.customTiles[String(blankTile.tileId)].pixels[0], 255); // R of #ff0000 at pixel (0,0)
+  assert.strictEqual(written.customTiles['5'].base, 5);
+  assert.strictEqual(written.customTiles[String(dup.newTileId)], undefined); // cleared
+
+  console.log('ALL ASSERTIONS PASSED');
+  await client.close();
+  process.exit(0);
+}
+
+main().catch(err => {
+  console.error('SMOKE TEST FAILED:', err);
+  process.exit(1);
+});

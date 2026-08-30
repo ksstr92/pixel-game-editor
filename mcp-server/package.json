@@ -1,0 +1,21 @@
+{
+  "name": "pixel-world-builder-mcp",
+  "version": "1.0.0",
+  "description": "MCP server exposing the world.json data model (maps, tiles, NPCs, triggers, items, exits, music, recipes, object stamps) used by editor.html / game.html for programmatic world-building.",
+  "main": "index.js",
+  "bin": {
+    "pixel-world-builder-mcp": "index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test/smoke.js"
+  },
+  "keywords": ["mcp", "model-context-protocol"],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.5.4"
+  }
+}
