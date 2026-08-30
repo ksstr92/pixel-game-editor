@@ -132,6 +132,12 @@ tool('world_validate', 'Check the in-memory world for dangling references and ou
   if (!mapIds.has(w.currentMapId)) issues.push(`currentMapId "${w.currentMapId}" does not match any map`);
 
   for (const m of w.maps) {
+    if (m.tileMap.length !== MAP_ROWS || m.tileMap.some(row => row.length !== MAP_COLS)) {
+      issues.push(`Map "${m.name}" tileMap is ${m.tileMap.length}x${m.tileMap[0]?.length ?? 0}, but editor.html/game.html require exactly ${MAP_ROWS}x${MAP_COLS} — this will break switching/rendering/deleting in the editor`);
+    }
+    if (m.overlayMap.length !== MAP_ROWS || m.overlayMap.some(row => row.length !== MAP_COLS)) {
+      issues.push(`Map "${m.name}" overlayMap is not ${MAP_ROWS}x${MAP_COLS}`);
+    }
     for (const e of m.exits) {
       if (!mapIds.has(e.toMapId)) issues.push(`Map "${m.name}" exit ${e.id}: toMapId "${e.toMapId}" not found`);
     }
@@ -207,10 +213,10 @@ tool('tile_name_to_id', 'Resolve a bundled tile name (e.g. "GRASS_A") to its til
 
 // ── Maps ─────────────────────────────────────────────────────────────────
 
-tool('map_create', 'Create a new map in the world.',
-  { name: z.string(), cols: z.number().int().positive().default(MAP_COLS), rows: z.number().int().positive().default(MAP_ROWS) },
-  ({ name, cols, rows }) => {
-    const m = newMap(name, cols, rows);
+tool('map_create', `Create a new map in the world. Maps are always ${MAP_ROWS}x${MAP_COLS} — editor.html/game.html hardcode that grid size everywhere except multi-tile object stamps, so a map of any other size renders/switches/deletes incorrectly and can break the editor UI.`,
+  { name: z.string() },
+  ({ name }) => {
+    const m = newMap(name, MAP_COLS, MAP_ROWS);
     state.world.maps.push(m);
     return mapSummary(m);
   });

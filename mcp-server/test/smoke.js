@@ -40,8 +40,10 @@ async function main() {
   assert.strictEqual(raw0.typeTable[0], 2, 'WATER_A should default to WATER type (2), not flat GRASS');
   assert.strictEqual(raw0.customNames[17], 'GRASS_A');
 
-  const map2 = await call('map_create', { name: 'Dungeon', cols: 32, rows: 32 });
+  const map2 = await call('map_create', { name: 'Dungeon' });
   console.log('map2 created:', map2.id);
+  assert.strictEqual(map2.cols, 64);
+  assert.strictEqual(map2.rows, 64);
 
   await call('tile_fill_rect', { mapId, layer: 'base', rowStart: 0, colStart: 0, rowEnd: 63, colEnd: 63, tileId: 17 });
   await call('tiletype_set', { tileId: 17, type: 'GRASS' });
@@ -107,11 +109,31 @@ async function main() {
   console.log('validation:', validation);
   assert.strictEqual(validation.valid, true, 'expected world to validate cleanly');
 
+  // Regression: a map whose grid isn't 64x64 must be flagged (editor.html hardcodes
+  // MAP_ROWS/MAP_COLS=64 everywhere except object stamps — any other size breaks
+  // switching/rendering/deleting in the editor UI).
+  const fs = require('fs');
+  const goodWorldPath = path.join(require('os').tmpdir(), 'mcp-smoke-good-world.json');
+  const raw = await call('world_get_raw', {});
+  fs.writeFileSync(goodWorldPath, JSON.stringify(raw)); // snapshot to restore after the regression check below
+
+  const badWorldPath = path.join(require('os').tmpdir(), 'mcp-smoke-bad-world.json');
+  const badWorld = JSON.parse(JSON.stringify(raw));
+  badWorld.maps[0].tileMap = Array.from({ length: 44 }, () => new Array(44).fill(-1));
+  badWorld.maps[0].overlayMap = Array.from({ length: 44 }, () => new Array(44).fill(-1));
+  fs.writeFileSync(badWorldPath, JSON.stringify(badWorld));
+  await call('world_load', { filePath: badWorldPath });
+  const badValidation = await call('world_validate', {});
+  assert.strictEqual(badValidation.valid, false);
+  assert(badValidation.issues.some(i => i.includes('44x44')), 'expected dimension mismatch to be flagged');
+  console.log('bad-dimension map correctly flagged:', badValidation.issues[0]);
+
+  await call('world_load', { filePath: goodWorldPath }); // restore before final save/assertions
+
   const outPath = path.join(require('os').tmpdir(), 'mcp-smoke-world.json');
   const saveRes = await call('world_save', { filePath: outPath });
   console.log(saveRes.message);
 
-  const fs = require('fs');
   const written = JSON.parse(fs.readFileSync(outPath, 'utf8'));
   assert.strictEqual(written.maps.length, 2);
   assert.strictEqual(written.maps[0].npcs.length, 1);
