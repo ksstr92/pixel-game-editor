@@ -44,7 +44,8 @@ validates the result, and asserts the saved `world.json` has the expected shape.
 ## Tool groups
 
 - **World**: `world_new`, `world_load`, `world_save`, `world_summary`, `world_get_raw`, `world_validate`
-- **Assets**: `asset_set_tileset` (embeds a local PNG spritesheet as a data URL)
+- **Assets**: `asset_use_bundled` (embeds one of the tileset styles shipped in `asset/` — prefer this), `asset_set_tileset` (embeds any local PNG spritesheet)
+- **Tile catalog**: `tile_catalog_list`, `tile_catalog_find`, `tile_name_to_id` — look up bundled tile ids by name (`GRASS_A`, `TREE_PINE`, `WALL_GATE`, …) instead of guessing integers
 - **Maps**: `map_create`, `map_list`, `map_get`, `map_rename`, `map_delete`, `map_duplicate`, `map_set_spawn`
 - **Tiles**: `tile_paint`, `tile_fill_rect`, `tile_get`, `tiletype_set`, `tiletype_get`, `tile_tint_set`
 - **Pixel-level tile editing**: `tile_pixels_set`, `tile_pixel_paint`, `tile_pixel_fill`, `tile_pixels_get`, `tile_pixels_clear`, `tile_duplicate`, `tile_create_blank`
@@ -60,12 +61,27 @@ validates the result, and asserts the saved `world.json` has the expected shape.
 template ids in NPCs/items/recipes) so you can catch mistakes before opening the file in
 the editor or game.
 
-## Notes
+## Using tiles effectively
+
+`world_new` embeds the bundled **Monochrome** tileset (`asset/Monochrome/Tilemap/tilemap_packed.png`,
+136 tiles) by default, and seeds `typeTable`/`customNames` with the editor's real tile names
+and collision defaults — so a fresh world is immediately playable and tile ids already mean
+something, without any extra setup:
+
+- `tile_catalog_find({ query: "wall" })` → find a tile by meaning instead of guessing a number
+- `tile_name_to_id({ name: "PATH_A" })` → resolve a name to the id every other tool takes
+- `game.html` can only render tiles from an *embedded* spritesheet (it has no bundled fallback
+  of its own) — `world_new`'s default embed, or `asset_use_bundled`, takes care of that.
+
+`asset_use_bundled` also accepts `Default` and `Dot Matrix`, which are the same 136-tile
+layout in different art styles — the same ids and catalog names apply to all three. Pass
+`bundledTileset: "none"` to `world_new` if you plan to call `asset_set_tileset` with your own
+spritesheet instead (in which case the catalog/default types no longer apply, since they're
+specific to the bundled layout).
+
+## Other notes
 
 - Maps default to the editor's 64×64 grid; pass `cols`/`rows` to `map_create` for other sizes.
-- Tile ids are just integers into whichever tileset(s) are loaded — this server doesn't
-  render or inspect spritesheet images, it only manages the JSON. Use `asset_set_tileset`
-  if you want the saved world to carry an embedded spritesheet.
 - Pixel-level tile edits (`tile_pixel_paint`/`tile_pixel_fill`/`tile_pixels_set`) write to
   the same `customTiles[id] = { base, pixels }` structure editor.html and game.html read
   directly — `base` is the sheet tile drawn underneath (-1 for none), `pixels` is a 16×16

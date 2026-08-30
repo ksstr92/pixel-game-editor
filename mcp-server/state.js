@@ -3,13 +3,11 @@
 // Data model mirrors the world.json schema produced/consumed by editor.html / game.html.
 // See saveFile()/loadWorldData() in editor.html for the authoritative shape.
 
+const { TILE_TYPES } = require('./tileTypes');
+const { DEFAULT_T, MT_NAMES } = require('./tileCatalog');
+
 const MAP_COLS = 64;
 const MAP_ROWS = 64;
-
-const TILE_TYPES = {
-  WALL: 0, GRASS: 1, WATER: 2, SWALL: 3, TREE: 4,
-  PATH: 5, FLOOR: 6, DWALL: 7, OVERLAY_WALK: 8, OVERLAY_BLOCK: 9,
-};
 
 const DEFAULT_TINT = '#ffffff';
 const DEFAULT_TOTAL_TILES = 136;
@@ -46,8 +44,8 @@ function newWorld(firstMapName = 'Map 1') {
     currentMapId: m.id,
     maps: [m],
     tintTable: new Array(DEFAULT_TOTAL_TILES).fill(DEFAULT_TINT),
-    typeTable: new Array(DEFAULT_TOTAL_TILES).fill(TILE_TYPES.GRASS),
-    customNames: [],
+    typeTable: [...DEFAULT_T],
+    customNames: [...MT_NAMES],
     nextCustomTileId: DEFAULT_TOTAL_TILES,
     sheet1TileCount: DEFAULT_TOTAL_TILES,
     customTiles: {},

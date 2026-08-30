@@ -22,10 +22,23 @@ async function main() {
     return JSON.parse(res.content[0].text);
   }
 
-  await call('world_new', { firstMapName: 'Overworld' });
+  const newWorldRes = await call('world_new', { firstMapName: 'Overworld' });
+  assert(newWorldRes.tileset, 'expected bundled Monochrome tileset to be embedded by default');
   const summary1 = await call('world_summary', {});
   const mapId = summary1.maps[0].id;
   console.log('map created:', mapId);
+  assert.strictEqual(summary1.assets.tileset, true, 'expected assets.tileset to be set');
+
+  const catalog = await call('tile_catalog_list', {});
+  assert.strictEqual(catalog.length, 136);
+  const wallHits = await call('tile_catalog_find', { query: 'wall' });
+  assert(wallHits.length > 0);
+  const grassA = await call('tile_name_to_id', { name: 'GRASS_A' });
+  assert.strictEqual(grassA.id, 17);
+
+  const raw0 = await call('world_get_raw', {});
+  assert.strictEqual(raw0.typeTable[0], 2, 'WATER_A should default to WATER type (2), not flat GRASS');
+  assert.strictEqual(raw0.customNames[17], 'GRASS_A');
 
   const map2 = await call('map_create', { name: 'Dungeon', cols: 32, rows: 32 });
   console.log('map2 created:', map2.id);
@@ -115,6 +128,8 @@ async function main() {
   assert.strictEqual(written.customTiles[String(blankTile.tileId)].pixels[0], 255); // R of #ff0000 at pixel (0,0)
   assert.strictEqual(written.customTiles['5'].base, 5);
   assert.strictEqual(written.customTiles[String(dup.newTileId)], undefined); // cleared
+  assert(written.assets.tileset && written.assets.tileset.dataUrl.startsWith('data:image/png;base64,'));
+  assert.strictEqual(written.sheet1TileCount, 136);
 
   console.log('ALL ASSERTIONS PASSED');
   await client.close();

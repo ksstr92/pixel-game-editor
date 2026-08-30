@@ -13,6 +13,21 @@ const {
   state, findMap, ensureTileTables, allocCustomTileId,
 } = require('./state');
 const px = require('./pixel');
+const tileCatalog = require('./tileCatalog');
+
+const REPO_ROOT = path.join(__dirname, '..');
+
+function bundledTilesetPath(style) {
+  return path.join(REPO_ROOT, 'asset', style, 'Tilemap', 'tilemap_packed.png');
+}
+
+function embedBundledTileset(style, slot) {
+  const abs = bundledTilesetPath(style);
+  const buf = fs.readFileSync(abs);
+  state.world.assets[slot] = { name: path.basename(abs), dataUrl: `data:image/png;base64,${buf.toString('base64')}` };
+  if (slot === 'tileset') state.world.sheet1TileCount = tileCatalog.TOTAL;
+  return abs;
+}
 
 const server = new McpServer({ name: 'pixel-world-builder', version: '1.0.0' });
 
@@ -47,12 +62,20 @@ function mapSummary(m) {
 
 // ── World ────────────────────────────────────────────────────────────────
 
-tool('world_new', 'Start a fresh, empty world in memory with a single map. Discards any unsaved in-memory world.',
-  { firstMapName: z.string().default('Map 1') },
-  ({ firstMapName }) => {
+tool('world_new', 'Start a fresh, empty world in memory with a single map. Discards any unsaved in-memory world. By default embeds the bundled Monochrome tileset so tile ids immediately correspond to real art and tile_catalog_* names — pass bundledTileset: "none" to skip.',
+  {
+    firstMapName: z.string().default('Map 1'),
+    bundledTileset: z.enum([...tileCatalog.BUNDLED_STYLES, 'none']).default('Monochrome'),
+  },
+  ({ firstMapName, bundledTileset }) => {
     state.world = newWorld(firstMapName);
     state.filePath = null;
-    return { message: 'New world created', map: mapSummary(state.world.maps[0]) };
+    let tileset = null;
+    if (bundledTileset !== 'none') {
+      const abs = embedBundledTileset(bundledTileset, 'tileset');
+      tileset = { style: bundledTileset, path: abs };
+    }
+    return { message: 'New world created', map: mapSummary(state.world.maps[0]), tileset };
   });
 
 tool('world_load', 'Load a world.json file from disk into memory, replacing the current in-memory world.',
@@ -159,6 +182,28 @@ tool('asset_set_tileset', 'Load a local PNG spritesheet file as tileset 1 or 2 (
     }
     return { message: `Set ${slot} from ${abs} (${buf.length} bytes)` };
   });
+
+tool('asset_use_bundled', `Embed one of the tileset styles that ships in this project's asset/ folder (${tileCatalog.BUNDLED_STYLES.join(', ')}) — same 136-tile layout in different art styles, so tile ids and tile_catalog_* names apply to all of them. Prefer this over asset_set_tileset for the common case.`,
+  { style: z.enum(tileCatalog.BUNDLED_STYLES), slot: z.enum(['tileset', 'tileset2']).default('tileset') },
+  ({ style, slot }) => {
+    const abs = embedBundledTileset(style, slot);
+    return { message: `Embedded bundled "${style}" tileset in slot "${slot}" from ${abs}` };
+  });
+
+// ── Tile catalog ─────────────────────────────────────────────────────────
+// Names + default collision types for the 136 tiles in the bundled tileset, so
+// tiles can be picked by meaning ("PATH_A", "TREE_PINE") instead of guessing raw
+// integer ids. Only meaningful when the world uses a bundled/default-layout sheet.
+
+tool('tile_catalog_list', 'List all 136 bundled tile ids with their names and default collision type.', {}, () => tileCatalog.catalog());
+
+tool('tile_catalog_find', 'Search bundled tile names by substring (case-insensitive), e.g. "wall", "tree", "door".',
+  { query: z.string() },
+  ({ query }) => tileCatalog.findByName(query));
+
+tool('tile_name_to_id', 'Resolve a bundled tile name (e.g. "GRASS_A") to its tile id.',
+  { name: z.string() },
+  ({ name }) => ({ name, id: tileCatalog.idForName(name) }));
 
 // ── Maps ─────────────────────────────────────────────────────────────────
 
