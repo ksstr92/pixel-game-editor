@@ -3243,11 +3243,35 @@ function renderMap() {
     }
   }
 
+  // Capture-rectangle overlay (drag-to-create-object tool)
+  if (captureDrag) {
+    const { r0, c0, r1, c1 } = captureDrag;
+    const x = Math.round(Math.min(c0, c1) * ts - camX);
+    const y = Math.round(Math.min(r0, r1) * ts - camY);
+    const w = (Math.abs(c1 - c0) + 1) * ts;
+    const h = (Math.abs(r1 - r0) + 1) * ts;
+    mapCtx.save();
+    mapCtx.fillStyle = 'rgba(200,140,255,0.15)';
+    mapCtx.fillRect(x, y, w, h);
+    mapCtx.strokeStyle = 'rgba(200,140,255,0.9)';
+    mapCtx.lineWidth = 1.5;
+    mapCtx.setLineDash([4, 3]);
+    mapCtx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    mapCtx.restore();
+  }
+
   // Minimap
   renderMinimap();
 }
 
 let hoverCell = { r:-1, c:-1 };
+
+// 'capture' tool: drag a rectangle on the map to create a new object template
+// from the tiles/overlay already painted there, instead of hand-painting a
+// template cell by cell in the Object modal's grid editor.
+let isCapturing  = false;
+let captureStart = null;      // {r,c} at mousedown
+let captureDrag  = null;      // {r0,c0,r1,c1} normalized, live while dragging
 
 function redrawAll() {
   renderPalette();
@@ -3435,15 +3459,18 @@ function setTool(t) {
   tool = t;
   // Leaving paint tool clears the Alt eyedropper override
   if (t !== 'paint') altEyedropper = false;
+  // Leaving capture mode cancels any pending drag rectangle
+  if (t !== 'capture') { isCapturing = false; captureDrag = null; }
   ['paint','erase','fill','pick','select','exit','spawn','npc','item','trigger','object'].forEach(n =>
     document.getElementById('btn-'+n)?.classList.toggle('active', n === t)
   );
   // Show eraser size buttons only when eraser is active
   const szGroup = document.getElementById('eraser-size-group');
   if (szGroup) szGroup.style.display = t === 'erase' ? 'flex' : 'none';
-  mapCanvas.style.cursor = t === 'fill'   ? 'cell'
-                         : t === 'pick'   ? 'zoom-in'
-                         : t === 'select' ? 'default'
+  mapCanvas.style.cursor = t === 'fill'    ? 'cell'
+                         : t === 'pick'    ? 'zoom-in'
+                         : t === 'select'  ? 'default'
+                         : t === 'capture' ? 'crosshair'
                          : 'crosshair';
 }
 
@@ -4062,10 +4089,20 @@ function renderObjectsPanel() {
   const title = document.createElement('span');
   title.style.cssText = 'flex:1;color:#555;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;';
   title.textContent = 'Object Templates';
+  const captureBtn = document.createElement('button');
+  captureBtn.className = 'tbtn' + (tool === 'capture' ? ' active' : '');
+  captureBtn.textContent = '⬚ Capture from Map'; captureBtn.style.fontSize = '10px';
+  captureBtn.title = 'Drag a rectangle on the map to turn tiles you\'ve already painted into a reusable object';
+  captureBtn.onclick = () => {
+    if (tool === 'capture') { setTool('paint'); renderObjectsPanel(); return; }
+    setTool('capture');
+    renderObjectsPanel();
+    toast('Drag a rectangle on the map to capture it as a new object');
+  };
   const newBtn = document.createElement('button');
   newBtn.className = 'tbtn import-btn'; newBtn.textContent = '+ New Object'; newBtn.style.fontSize = '10px';
   newBtn.onclick = () => openObjectModal(null);
-  hdr.append(title, newBtn);
+  hdr.append(title, captureBtn, newBtn);
   panel.appendChild(hdr);
 
   // Active stamp indicator
@@ -4074,6 +4111,12 @@ function renderObjectsPanel() {
     activeBar.style.cssText = 'background:#1a3a1a;border:1px solid #2a6a2a;color:#6c6;font-size:10px;padding:4px 8px;margin-bottom:8px;border-radius:3px;';
     const obj = objectTemplates.find(o => o.id === selectedObjectId);
     activeBar.textContent = `✦ Placing: ${obj?.name ?? '?'} — click map to stamp, Esc to cancel`;
+    panel.appendChild(activeBar);
+  }
+  if (tool === 'capture') {
+    const activeBar = document.createElement('div');
+    activeBar.style.cssText = 'background:#2a1a3a;border:1px solid #6a2a8a;color:#c8a;font-size:10px;padding:4px 8px;margin-bottom:8px;border-radius:3px;';
+    activeBar.textContent = '✦ Drag a rectangle on the map to capture it as a new object — Esc to cancel';
     panel.appendChild(activeBar);
   }
 
@@ -4149,14 +4192,45 @@ function renderObjectsPanel() {
   });
 }
 
+// Captures the tiles currently painted inside a map rectangle into a new object
+// template, so a structure already built by hand-painting on the map can be
+// turned into a reusable stamp without recreating it cell-by-cell.
+function finishCapture() {
+  if (!captureDrag) return;
+  const { r0, c0, r1, c1 } = captureDrag;
+  const rowStart = Math.min(r0, r1), rowEnd = Math.max(r0, r1);
+  const colStart = Math.min(c0, c1), colEnd = Math.max(c0, c1);
+  const rows = rowEnd - rowStart + 1, cols = colEnd - colStart + 1;
+  const tiles = [], overlay = [];
+  for (let r = rowStart; r <= rowEnd; r++) {
+    const tRow = [], oRow = [];
+    for (let c = colStart; c <= colEnd; c++) {
+      tRow.push(tileMap[r]?.[c] ?? -1);
+      oRow.push(overlayMap[r]?.[c] ?? -1);
+    }
+    tiles.push(tRow); overlay.push(oRow);
+  }
+  captureDrag = null;
+  setTool('paint');
+  renderObjectsPanel();
+  renderMap();
+  openObjectModal(null, { rows, cols, tiles, overlay });
+}
+
 // ── Object Modal (create / edit) ────────────────────────────
-function openObjectModal(objId) {
+// `preset`, when given (only for new objects — objId must be null), pre-fills
+// the grid from already-painted map tiles instead of starting blank.
+function openObjectModal(objId, preset = null) {
   const existing = objId ? objectTemplates.find(o => o.id === objId) : null;
-  let rows = existing?.rows ?? 3;
-  let cols = existing?.cols ?? 3;
+  let rows = existing?.rows ?? preset?.rows ?? 3;
+  let cols = existing?.cols ?? preset?.cols ?? 3;
   // Deep-copy grids so we can cancel without side-effects
-  let baseTiles    = existing ? existing.tiles.map(r => [...r])    : makeGrid(rows, cols, -1);
-  let overlayTiles = existing ? existing.overlay.map(r => [...r])  : makeGrid(rows, cols, -1);
+  let baseTiles    = existing ? existing.tiles.map(r => [...r])
+                    : preset  ? preset.tiles.map(r => [...r])
+                    : makeGrid(rows, cols, -1);
+  let overlayTiles = existing ? existing.overlay.map(r => [...r])
+                    : preset  ? preset.overlay.map(r => [...r])
+                    : makeGrid(rows, cols, -1);
   let activeLayer  = 'base'; // 'base' or 'overlay'
 
   function makeGrid(r, c, fill) {
@@ -4180,7 +4254,7 @@ function openObjectModal(objId) {
 
   const h3 = document.createElement('h3');
   h3.style.color = '#c8a';
-  h3.textContent = existing ? `Edit Object: ${existing.name}` : 'New Object';
+  h3.textContent = existing ? `Edit Object: ${existing.name}` : preset ? 'New Object (captured from map)' : 'New Object';
 
   // Name
   const nameRow = document.createElement('div');
@@ -4188,7 +4262,7 @@ function openObjectModal(objId) {
   const nameLbl = document.createElement('label');
   nameLbl.textContent = 'Name:'; nameLbl.style.cssText = 'color:#888;min-width:60px;';
   const nameInp = document.createElement('input');
-  nameInp.type = 'text'; nameInp.value = existing?.name ?? 'New Object';
+  nameInp.type = 'text'; nameInp.value = existing?.name ?? (preset ? 'Captured Object' : 'New Object');
   nameInp.style.cssText = 'flex:1;background:#111;color:#c8a;border:1px solid #2a2a2a;padding:4px 6px;font-family:inherit;font-size:11px;';
   nameRow.append(nameLbl, nameInp);
 
@@ -5089,6 +5163,13 @@ mapCanvas.addEventListener('mousedown', e => {
         const obj = objectTemplates.find(o=>o.id===selectedObjectId);
         if(obj) stampObject(obj, r, c);
       }
+    } else if(tool==='capture') {
+      if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
+        isCapturing = true;
+        captureStart = {r,c};
+        captureDrag = {r0:r,c0:c,r1:r,c1:c};
+        renderMap();
+      }
     } else if(tool==='select') {
       if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
         const cur = worldMaps.find(m=>m.id===currentMapId);
@@ -5129,7 +5210,12 @@ mapCanvas.addEventListener('mousemove', e => {
     statusEl.textContent=`Row ${r}  Col ${c}  (out of bounds)`;
   }
 
-  if(tool==='spawn' && (e.buttons&1) && r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
+  if(isCapturing) {
+    // Clamp to map bounds so dragging past the edge still extends the selection cleanly
+    captureDrag.r1 = Math.max(0, Math.min(MAP_ROWS-1, r));
+    captureDrag.c1 = Math.max(0, Math.min(MAP_COLS-1, c));
+    renderMap();
+  } else if(tool==='spawn' && (e.buttons&1) && r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
     const cur=worldMaps.find(m=>m.id===currentMapId);
     if(cur&&(cur.spawn?.row!==r||cur.spawn?.col!==c)){cur.spawn={row:r,col:c};renderMap();renderMapsList();}
   } else if(isPainting) {
@@ -5141,12 +5227,17 @@ mapCanvas.addEventListener('mousemove', e => {
 mapCanvas.addEventListener('mouseup', () => {
   isPainting=false;
   if(isPanning){ isPanning=false; mapCanvas.style.cursor='crosshair'; }
+  if(isCapturing) {
+    isCapturing = false;
+    finishCapture();
+  }
 });
 mapCanvas.addEventListener('mouseleave', () => {
   isPainting=false; isPanning=false;
   hoverCell={r:-1,c:-1};
   statusEl.textContent='Mouse: —';
   mapCanvas.style.cursor='crosshair';
+  if(isCapturing) { isCapturing = false; finishCapture(); }
   renderMap();
 });
 mapCanvas.addEventListener('contextmenu', e=>e.preventDefault());
@@ -5333,6 +5424,9 @@ document.addEventListener('keydown', e => {
   // ESC exits waypoint pick mode
   if (e.key === 'Escape' && tool === 'object') {
     selectedObjectId = null; setTool('paint'); renderObjectsPanel(); return;
+  }
+  if (e.key === 'Escape' && tool === 'capture') {
+    captureDrag = null; setTool('paint'); renderObjectsPanel(); renderMap(); return;
   }
   if (e.key === 'Escape' && npcWaypointPickMode?.interactive) {
     document.getElementById('_wp-toolbar')?.remove();
