@@ -443,6 +443,16 @@ select.type-sel {
     <button class="tbtn eraser-sz"        data-sz="8"  title="Erase 8×8">8</button>
   </span>
   <button class="tbtn" id="btn-fill"  title="Bucket fill [P]">🪣 Bucket</button>
+  <button class="tbtn" id="btn-randomfill" title="Conditional Fill — drag an area to fill it with a random mix of tiles/objects from the set below">🎲 Conditional Fill</button>
+  <span id="randomfill-group" style="display:none;gap:5px;align-items:center;">
+    <span style="color:#777;font-size:10px;">Set:</span>
+    <div id="randomfill-chips" style="display:flex;gap:3px;align-items:center;flex-wrap:wrap;"></div>
+    <button class="tbtn" id="btn-rf-add-tile" title="Add the currently selected palette tile to the set" style="font-size:10px;">+ Tile</button>
+    <select id="rf-add-object" class="type-sel" title="Add an object template to the set" style="font-size:10px;">
+      <option value="">+ Object…</option>
+    </select>
+    <button class="tbtn danger" id="btn-rf-clear" title="Clear the set" style="font-size:10px;">Clear</button>
+  </span>
   <button class="tbtn" id="btn-pick"   title="Eyedropper [I]">🔍 Eyedropper</button>
   <button class="tbtn" id="btn-select" title="Select [V] — click waypoints, NPCs, triggers to edit">↖ Select</button>
   <div class="sep"></div>
@@ -3259,17 +3269,18 @@ function renderMap() {
     }
   }
 
-  // Capture-rectangle overlay (drag-to-create-object tool)
+  // Drag-rectangle overlay, shared by 'capture' (purple) and 'randomfill' (amber)
   if (captureDrag) {
     const { r0, c0, r1, c1 } = captureDrag;
     const x = Math.round(Math.min(c0, c1) * ts - camX);
     const y = Math.round(Math.min(r0, r1) * ts - camY);
     const w = (Math.abs(c1 - c0) + 1) * ts;
     const h = (Math.abs(r1 - r0) + 1) * ts;
+    const rgb = dragRectMode === 'randomfill' ? '255,180,60' : '200,140,255';
     mapCtx.save();
-    mapCtx.fillStyle = 'rgba(200,140,255,0.15)';
+    mapCtx.fillStyle = `rgba(${rgb},0.15)`;
     mapCtx.fillRect(x, y, w, h);
-    mapCtx.strokeStyle = 'rgba(200,140,255,0.9)';
+    mapCtx.strokeStyle = `rgba(${rgb},0.9)`;
     mapCtx.lineWidth = 1.5;
     mapCtx.setLineDash([4, 3]);
     mapCtx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
@@ -3282,12 +3293,14 @@ function renderMap() {
 
 let hoverCell = { r:-1, c:-1 };
 
-// 'capture' tool: drag a rectangle on the map to create a new object template
-// from the tiles/overlay already painted there, instead of hand-painting a
-// template cell by cell in the Object modal's grid editor.
+// Shared drag-rectangle state for tools that select an area on the map by
+// dragging: 'capture' (turn painted tiles into an object template) and
+// 'randomfill' (Conditional Fill — see finishRandomFill()). dragRectMode records
+// which of those triggered the current drag so mouseup knows which to finish.
 let isCapturing  = false;
 let captureStart = null;      // {r,c} at mousedown
 let captureDrag  = null;      // {r0,c0,r1,c1} normalized, live while dragging
+let dragRectMode = null;      // 'capture' | 'randomfill'
 
 function redrawAll() {
   renderPalette();
@@ -3475,18 +3488,22 @@ function setTool(t) {
   tool = t;
   // Leaving paint tool clears the Alt eyedropper override
   if (t !== 'paint') altEyedropper = false;
-  // Leaving capture mode cancels any pending drag rectangle
-  if (t !== 'capture') { isCapturing = false; captureDrag = null; }
-  ['paint','erase','fill','pick','select','exit','spawn','npc','item','trigger','object'].forEach(n =>
+  // Leaving a drag-rectangle tool cancels any pending drag
+  if (t !== 'capture' && t !== 'randomfill') { isCapturing = false; captureDrag = null; dragRectMode = null; }
+  ['paint','erase','fill','randomfill','pick','select','exit','spawn','npc','item','trigger','object'].forEach(n =>
     document.getElementById('btn-'+n)?.classList.toggle('active', n === t)
   );
   // Show eraser size buttons only when eraser is active
   const szGroup = document.getElementById('eraser-size-group');
   if (szGroup) szGroup.style.display = t === 'erase' ? 'flex' : 'none';
-  mapCanvas.style.cursor = t === 'fill'    ? 'cell'
-                         : t === 'pick'    ? 'zoom-in'
-                         : t === 'select'  ? 'default'
-                         : t === 'capture' ? 'crosshair'
+  // Show the Conditional Fill set tray only while that tool is active
+  const rfGroup = document.getElementById('randomfill-group');
+  if (rfGroup) { rfGroup.style.display = t === 'randomfill' ? 'flex' : 'none'; if (t === 'randomfill') renderRandomFillChips(); }
+  mapCanvas.style.cursor = t === 'fill'       ? 'cell'
+                         : t === 'pick'       ? 'zoom-in'
+                         : t === 'select'     ? 'default'
+                         : t === 'capture'    ? 'crosshair'
+                         : t === 'randomfill' ? 'crosshair'
                          : 'crosshair';
 }
 
@@ -4231,6 +4248,103 @@ function finishCapture() {
   renderObjectsPanel();
   renderMap();
   openObjectModal(null, { rows, cols, tiles, overlay });
+}
+
+// ── Conditional Fill (random mix of tiles/objects across a dragged area) ────
+// The working set of picks the user builds up via the toolbar's "Set:" tray.
+// Each entry: { type:'tile', tileId } or { type:'object', objectId }.
+let randomFillPicks = [];
+
+function rfChipLabel(pick) {
+  if (pick.type === 'tile') return customNames[pick.tileId] || ('#' + pick.tileId);
+  const obj = objectTemplates.find(o => o.id === pick.objectId);
+  return obj ? obj.name : '(deleted object)';
+}
+
+function renderRandomFillChips() {
+  const box = document.getElementById('randomfill-chips');
+  if (!box) return;
+  box.innerHTML = '';
+  randomFillPicks.forEach((pick, i) => {
+    const chip = document.createElement('span');
+    chip.style.cssText = 'display:flex;align-items:center;gap:3px;background:#252525;border:1px solid #3a3a3a;border-radius:3px;padding:1px 4px;font-size:10px;color:' + (pick.type === 'object' ? '#c8a' : '#9db') + ';';
+    chip.textContent = (pick.type === 'object' ? '▦ ' : '') + rfChipLabel(pick);
+    const x = document.createElement('span');
+    x.textContent = '✕'; x.style.cssText = 'cursor:pointer;color:#888;margin-left:2px;';
+    x.onclick = () => { randomFillPicks.splice(i, 1); renderRandomFillChips(); };
+    chip.appendChild(x);
+    box.appendChild(chip);
+  });
+  // Keep the object dropdown current with existing templates
+  const sel = document.getElementById('rf-add-object');
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">+ Object…</option>';
+    objectTemplates.forEach(o => {
+      const opt = document.createElement('option'); opt.value = o.id; opt.textContent = o.name;
+      sel.appendChild(opt);
+    });
+    sel.value = cur;
+  }
+}
+
+// Fills every cell of the dragged rectangle with a randomly chosen tile from the
+// set's tile entries, then scatters the set's object entries sparsely on top —
+// solid random fill for terrain variety (e.g. several grass tiles), plus a light
+// sprinkle of bigger set pieces (bushes, rocks...) instead of a uniform block.
+function finishRandomFill() {
+  if (!captureDrag) return;
+  const { r0, c0, r1, c1 } = captureDrag;
+  const rowStart = Math.min(r0, r1), rowEnd = Math.max(r0, r1);
+  const colStart = Math.min(c0, c1), colEnd = Math.max(c0, c1);
+  captureDrag = null;
+
+  const tilePicks = randomFillPicks.filter(p => p.type === 'tile');
+  const objectPicks = randomFillPicks
+    .filter(p => p.type === 'object')
+    .map(p => objectTemplates.find(o => o.id === p.objectId))
+    .filter(Boolean);
+
+  if (!tilePicks.length && !objectPicks.length) { renderMap(); return; }
+
+  const ops = [];
+
+  if (tilePicks.length) {
+    for (let r = rowStart; r <= rowEnd; r++) {
+      for (let c = colStart; c <= colEnd; c++) {
+        const pick = tilePicks[Math.floor(Math.random() * tilePicks.length)];
+        if (tileMap[r][c] !== pick.tileId) {
+          ops.push({ r, c, old: tileMap[r][c], nw: pick.tileId, layer: 'base' });
+          tileMap[r][c] = pick.tileId;
+        }
+      }
+    }
+  }
+
+  if (objectPicks.length) {
+    const areaW = colEnd - colStart + 1, areaH = rowEnd - rowStart + 1;
+    const count = Math.max(1, Math.round((areaW * areaH) / 36)); // ~1 per 6x6 tiles
+    for (let i = 0; i < count; i++) {
+      const obj = objectPicks[Math.floor(Math.random() * objectPicks.length)];
+      const maxR = rowEnd - obj.rows + 1, maxC = colEnd - obj.cols + 1;
+      if (maxR < rowStart || maxC < colStart) continue; // object too big for this area
+      const orow = rowStart + Math.floor(Math.random() * (maxR - rowStart + 1));
+      const ocol = colStart + Math.floor(Math.random() * (maxC - colStart + 1));
+      for (let dr = 0; dr < obj.rows; dr++) {
+        for (let dc = 0; dc < obj.cols; dc++) {
+          const rr = orow + dr, cc = ocol + dc;
+          const bId = obj.tiles[dr]?.[dc] ?? -1;
+          const oId = obj.overlay[dr]?.[dc] ?? -1;
+          if (bId >= 0) { ops.push({ r: rr, c: cc, old: tileMap[rr][cc], nw: bId, layer: 'base' }); tileMap[rr][cc] = bId; }
+          if (oId >= 0) { ops.push({ r: rr, c: cc, old: overlayMap[rr]?.[cc] ?? -1, nw: oId, layer: 'overlay' }); overlayMap[rr][cc] = oId; }
+        }
+      }
+    }
+  }
+
+  if (ops.length) pushUndo(ops);
+  markMinimapDirty(); renderMap();
+  toast(`Conditional fill: ${tilePicks.length} tile(s)` + (objectPicks.length ? `, ${objectPicks.length} object(s) scattered` : '') + ` over ${colEnd - colStart + 1}×${rowEnd - rowStart + 1}`);
 }
 
 // ── Object Modal (create / edit) ────────────────────────────
@@ -5266,6 +5380,16 @@ mapCanvas.addEventListener('mousedown', e => {
         isCapturing = true;
         captureStart = {r,c};
         captureDrag = {r0:r,c0:c,r1:r,c1:c};
+        dragRectMode = 'capture';
+        renderMap();
+      }
+    } else if(tool==='randomfill') {
+      if(r>=0&&r<MAP_ROWS&&c>=0&&c<MAP_COLS) {
+        if (!randomFillPicks.length) { toast('Add at least one tile or object to the set first'); return; }
+        isCapturing = true;
+        captureStart = {r,c};
+        captureDrag = {r0:r,c0:c,r1:r,c1:c};
+        dragRectMode = 'randomfill';
         renderMap();
       }
     } else if(tool==='select') {
@@ -5322,20 +5446,24 @@ mapCanvas.addEventListener('mousemove', e => {
   } else renderMap();
 });
 
+function finishDragRect() {
+  isCapturing = false;
+  const mode = dragRectMode; dragRectMode = null;
+  if (mode === 'randomfill') finishRandomFill();
+  else finishCapture();
+}
+
 mapCanvas.addEventListener('mouseup', () => {
   isPainting=false;
   if(isPanning){ isPanning=false; mapCanvas.style.cursor='crosshair'; }
-  if(isCapturing) {
-    isCapturing = false;
-    finishCapture();
-  }
+  if(isCapturing) finishDragRect();
 });
 mapCanvas.addEventListener('mouseleave', () => {
   isPainting=false; isPanning=false;
   hoverCell={r:-1,c:-1};
   statusEl.textContent='Mouse: —';
   mapCanvas.style.cursor='crosshair';
-  if(isCapturing) { isCapturing = false; finishCapture(); }
+  if(isCapturing) finishDragRect();
   renderMap();
 });
 mapCanvas.addEventListener('contextmenu', e=>e.preventDefault());
@@ -5376,6 +5504,24 @@ document.querySelectorAll('.eraser-sz').forEach(btn => {
   });
 });
 document.getElementById('btn-fill' ).onclick=()=>setTool('fill');
+document.getElementById('btn-randomfill').onclick = () => {
+  if (tool === 'randomfill') { setTool('paint'); return; }
+  setTool('randomfill');
+  toast(randomFillPicks.length ? 'Drag an area on the map to fill it' : 'Add tiles/objects to the set, then drag an area on the map');
+};
+document.getElementById('btn-rf-add-tile').onclick = () => {
+  if (randomFillPicks.some(p => p.type === 'tile' && p.tileId === selTile)) { toast('Already in the set'); return; }
+  randomFillPicks.push({ type: 'tile', tileId: selTile });
+  renderRandomFillChips();
+};
+document.getElementById('rf-add-object').addEventListener('change', e => {
+  const id = e.target.value; e.target.value = '';
+  if (!id) return;
+  if (randomFillPicks.some(p => p.type === 'object' && p.objectId === id)) { toast('Already in the set'); return; }
+  randomFillPicks.push({ type: 'object', objectId: id });
+  renderRandomFillChips();
+});
+document.getElementById('btn-rf-clear').onclick = () => { randomFillPicks = []; renderRandomFillChips(); };
 document.getElementById('btn-pick' ).onclick=()=>setTool('pick');
 document.getElementById('btn-exit'  ).onclick=()=>setTool('exit');
 document.getElementById('btn-spawn' ).onclick=()=>{ setTool('spawn'); toast('Click any cell to set the player spawn point'); };
@@ -5526,6 +5672,9 @@ document.addEventListener('keydown', e => {
   }
   if (e.key === 'Escape' && tool === 'capture') {
     captureDrag = null; setTool('paint'); renderObjectsPanel(); renderMap(); return;
+  }
+  if (e.key === 'Escape' && tool === 'randomfill') {
+    captureDrag = null; setTool('paint'); renderMap(); return;
   }
   if (e.key === 'Escape' && npcWaypointPickMode?.interactive) {
     document.getElementById('_wp-toolbar')?.remove();

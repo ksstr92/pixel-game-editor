@@ -32,6 +32,7 @@ A self-contained, browser-based RPG world builder and game engine. No installati
 - Two tileset sheets supported simultaneously (Sheet 1 + Sheet 2)
 - Paint tiles on the **base layer** or **overlay layer**
 - Overlay tiles render on top of the base and can act as walls (type: Overlay Block)
+- **Conditional Fill** — build a set of several tiles and/or object templates (the "Set:" tray next to Bucket), then drag a rectangle on the map: every cell gets a random tile from the set, plus a light random scatter of any objects included — useful for natural-looking terrain (e.g. a few grass variants mixed together) instead of one uniform tile
 - **Undo / Redo** for all paint operations
 - Adjustable zoom (1× – 8×) and optional grid overlay
 - **Minimap** for navigating large maps
