@@ -73,9 +73,22 @@ async function main() {
   await call('music_track_add', { mapId, filename: 'theme.mp3' });
 
   const objTmpl = await call('object_template_create', {
-    name: 'Small House', rows: 2, cols: 2, tiles: [[10, 11], [12, 13]],
+    name: 'Small House', category: 'building', description: 'quick 4-tile house block for tests',
+    rows: 2, cols: 2, tiles: [[10, 11], [12, 13]],
   });
+  assert.strictEqual(objTmpl.category, 'building');
+  assert.strictEqual(objTmpl.tileCount, 4);
   await call('object_stamp', { mapId, objectId: objTmpl.id, row: 20, col: 20 });
+
+  const buildingTemplates = await call('object_template_find', { category: 'building' });
+  assert.strictEqual(buildingTemplates.length, 1);
+  assert.strictEqual(buildingTemplates[0].id, objTmpl.id);
+  const furnitureTemplates = await call('object_template_find', { category: 'furniture' });
+  assert.strictEqual(furnitureTemplates.length, 0);
+
+  const guide = await call('structure_guide', {});
+  assert(guide.concepts.some(c => c.concept === 'forest' && c.minTiles === 4));
+  assert(guide.concepts.some(c => c.concept === 'tree' && c.minTiles === 1));
 
   // Tile roles + room outline helper
   const wallTiles = await call('tile_catalog_by_role', { role: 'wall' });

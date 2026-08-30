@@ -239,6 +239,21 @@ tool('tile_name_to_id', 'Resolve a bundled tile name (e.g. "GRASS_A") to its til
   { name: z.string() },
   ({ name }) => ({ name, id: tileCatalog.idForName(name) }));
 
+tool('structure_guide', 'Read before placing scenery: minimum-tile-count conventions for common concepts (trees, forests, houses, rooms), and when a single tile is enough vs. when you need a multi-tile composite. Call this once per session before building out a map\'s scenery.', {}, () => ({
+  principles: [
+    'A "structure" or "prop" role tile (tile_catalog_by_role) is already a complete object at 1 tile — placing several of the SAME concept next to each other does not make one bigger version of it; it just repeats the object.',
+    'A "wall"/"door"/"linear" role tile is one PIECE of something bigger and looks wrong placed alone — assemble with room_outline or a saved object_template (see object_template_find before building a new one).',
+    'More tiles = more visual detail, not a different collision/gameplay meaning by itself — scale up tile count only for scenery you want to stand out (a landmark building, a dense forest), not uniformly.',
+  ],
+  concepts: [
+    { concept: 'tree', minTiles: 1, guidance: 'One TREE_* structure tile is a complete tree. Fine to scatter individually across grass.' },
+    { concept: 'forest', minTiles: 4, guidance: 'A cluster of 4+ TREE_* tiles reads as a forest patch. Vary which TREE_* variant you use and offset them irregularly (not a perfect grid) so it doesn\'t look planted.' },
+    { concept: 'small building', minTiles: 1, guidance: 'One HOUSE_* structure tile is a complete small building — good for background/distant buildings or a village of simple houses.' },
+    { concept: 'large / detailed building', minTiles: '10+ (e.g. 13)', guidance: 'Needs a hand-built multi-tile composite (roof + textured walls + a door insert) saved via object_template_create with category:"building" — there is no single tile for this, and no verified stock recipe shipped here yet. Build it once, look at it in the editor, then reuse it with object_stamp instead of re-deriving the layout each time. Check object_template_find({category:"building"}) first in case one already exists in this world.' },
+    { concept: 'room / building interior', minTiles: 'width*height', guidance: 'Use room_outline for a plain rectangular room (wall run + floor fill). For anything irregular, build once with object_template_create using wall/door role tiles, verify visually, then reuse.' },
+  ],
+}));
+
 // ── Maps ─────────────────────────────────────────────────────────────────
 
 tool('map_create', `Create a new map in the world. Maps are always ${MAP_ROWS}x${MAP_COLS} — editor.html/game.html hardcode that grid size everywhere except multi-tile object stamps, so a map of any other size renders/switches/deletes incorrectly and can break the editor UI.`,
@@ -708,25 +723,42 @@ tool('recipe_delete', 'Delete a crafting recipe.', { recipeId: z.string() }, ({ 
 
 // ── Object templates (multi-tile stamps) ────────────────────────────────
 
-tool('object_template_create', 'Create a reusable multi-tile stamp (e.g. a house or tree cluster) from explicit tile/overlay grids.',
+function templateTileCount(t) {
+  let n = 0;
+  for (const row of t.tiles) for (const v of row) if (v >= 0) n++;
+  if (t.overlay) for (const row of t.overlay) for (const v of row) if (v >= 0) n++;
+  return n;
+}
+
+function templateSummary(t) {
+  return { id: t.id, name: t.name, category: t.category ?? null, description: t.description ?? '', rows: t.rows, cols: t.cols, tileCount: templateTileCount(t) };
+}
+
+tool('object_template_create', `Create a reusable multi-tile stamp (e.g. a house or tree cluster) from explicit tile/overlay grids. Prefer object_template_create + object_stamp over placing 'wall'/'structure' pieces by hand for anything you'll reuse — annotate it with category/description so it shows up under object_template_find and future calls (yours or another agent's) don't have to re-derive the same layout. Verify the result looks right in the editor before treating it as reusable, especially for anything built from 'wall'-role pieces.`,
   {
     name: z.string(),
+    category: z.string().optional().describe('Free-form grouping for discovery, e.g. "building", "vegetation", "furniture". Use tile_catalog_by_role({role:"structure"}) roots for single-tile concepts and reserve templates for multi-tile ones.'),
+    description: z.string().optional().describe('What this represents and any composition notes, e.g. "13-tile detailed house: 2-wide sloped roof over a 3x3 stone wall block with a door insert".'),
     rows: z.number().int().positive(),
     cols: z.number().int().positive(),
     tiles: z.array(z.array(z.number().int())),
     overlay: z.array(z.array(z.number().int())).optional(),
   },
-  ({ name, rows, cols, tiles, overlay }) => {
+  ({ name, category, description, rows, cols, tiles, overlay }) => {
     if (tiles.length !== rows || tiles.some(r => r.length !== cols)) {
       throw new Error(`tiles must be a ${rows}x${cols} grid`);
     }
     const overlayTiles = overlay ?? emptyGrid(rows, cols);
-    const t = { id: genId('obj'), name, rows, cols, tiles, overlay: overlayTiles };
+    const t = { id: genId('obj'), name, category: category ?? null, description: description ?? '', rows, cols, tiles, overlay: overlayTiles };
     state.world.objectTemplates.push(t);
-    return t;
+    return templateSummary(t);
   });
 
-tool('object_template_list', 'List object (multi-tile stamp) templates.', {}, () => state.world.objectTemplates);
+tool('object_template_list', 'List object (multi-tile stamp) templates with their category/description/tileCount.', {}, () => state.world.objectTemplates.map(templateSummary));
+
+tool('object_template_find', 'List object templates filtered by category (e.g. "building", "vegetation") — use this before building a new template from scratch, in case one already exists.',
+  { category: z.string() },
+  ({ category }) => state.world.objectTemplates.filter(t => (t.category ?? '').toLowerCase() === category.toLowerCase()).map(templateSummary));
 
 tool('object_template_delete', 'Delete an object template.', { objectId: z.string() }, ({ objectId }) => {
   const w = state.world;

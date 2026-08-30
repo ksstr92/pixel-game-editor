@@ -55,7 +55,8 @@ validates the result, and asserts the saved `world.json` has the expected shape.
 - **Exits**: `exit_add`, `exit_delete`, `exit_list`
 - **Music**: `music_track_add`, `music_track_remove`, `music_list`
 - **Recipes**: `recipe_create`, `recipe_list`, `recipe_delete`
-- **Object stamps**: `object_template_create`, `object_template_list`, `object_template_delete`, `object_stamp`
+- **Object stamps**: `object_template_create` (category/description/tileCount), `object_template_list`, `object_template_find`, `object_template_delete`, `object_stamp`
+- **Structure guidance**: `structure_guide` — minimum-tile-count conventions for trees/forests/houses/rooms
 
 `world_validate` checks for dangling references (map ids in exits/transitions/schedules,
 template ids in NPCs/items/recipes) so you can catch mistakes before opening the file in
@@ -104,6 +105,27 @@ convention this tileset actually draws (only the north-facing wall — top-down 
 leave south/side walls undrawn so they don't block the view of what's inside). For anything more
 elaborate (a custom room shape, a specific prop layout), build it once with `object_template_create`
 from tiles picked via `tile_catalog_by_role`, then reuse it anywhere with `object_stamp`.
+
+### How many tiles does "a house" need?
+
+It depends which house you mean, and that's exactly the point — call `structure_guide` before
+placing scenery for a rule of thumb per concept (a tree is 1 tile; a forest patch wants 4+; a
+plain background house is 1 `structure`-role tile; a large, detailed building is a hand-built
+multi-tile composite with no single correct answer). The important habit this is meant to build:
+
+1. Check `object_template_find({ category: "building" })` (or `"vegetation"`, etc.) before
+   building something from scratch — it may already exist in this world.
+2. If it doesn't, compose it from role-correct tiles (`tile_catalog_by_role`) and save it with
+   `object_template_create`, passing `category` and a `description` that records *why* it's built
+   the way it is (tile counts, which pieces go where) — that annotation is what makes it
+   discoverable and reusable later, by you or another agent, instead of every session
+   re-deriving the same layout (or worse, guessing tile ids that turn out wrong).
+3. Reuse it anywhere with `object_stamp` instead of hand-placing the same tiles again.
+
+This server doesn't ship a verified "large house" template — the exact roof/wall tile ids for a
+detailed multi-tile building need a quick visual check in the editor (hover a palette tile to see
+its name) before they're trustworthy to reuse. Build one, confirm it looks right, then register it
+so it doesn't need re-deriving.
 
 ## Other notes
 
