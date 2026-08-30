@@ -197,6 +197,8 @@ select.type-sel {
   padding: 16px;
   min-width: 500px;
   max-width: 90vw;
+  max-height: 90vh;
+  overflow-y: auto;
   display: flex; flex-direction: column; gap: 10px;
 }
 .modal h3 { color: #9ce; margin-bottom: 4px; }
@@ -207,7 +209,12 @@ select.type-sel {
   padding: 8px; resize: vertical;
   min-height: 300px;
 }
-.modal-btns { display: flex; gap: 8px; justify-content: flex-end; }
+.modal-btns {
+  display: flex; gap: 8px; justify-content: flex-end;
+  position: sticky; bottom: 0;
+  background: #1c1c1c; padding-top: 8px;
+  border-top: 1px solid #2a2a2a;
+}
 .modal p { color: #777; font-size: 11px; line-height: 1.6; }
 
 /* ── TOAST ── */
@@ -4308,7 +4315,7 @@ function openObjectModal(objId, preset = null) {
   // Grid canvas
   const CELL = 36;
   const gridCanvas = document.createElement('canvas');
-  gridCanvas.style.cssText = 'display:block;border:1px solid #2a2a2a;image-rendering:pixelated;cursor:crosshair;';
+  gridCanvas.style.cssText = 'display:block;border:1px solid #2a2a2a;image-rendering:pixelated;cursor:crosshair;max-width:100%;height:auto;';
   const gc = gridCanvas.getContext('2d');
 
   function rebuildGrid() {
